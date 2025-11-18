@@ -5,4 +5,6 @@ export interface Equipo extends Document {
   description?: string;
   imageUrl?: string;
   createdAt?: Date;
+  category?: string;
+  disponibilidad?: boolean;
 }

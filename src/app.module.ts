@@ -3,9 +3,10 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { EquiposModule } from './equipos/equipos.module';
 import { MongooseModule } from '@nestjs/mongoose';
+import { AulasModule } from './aulas/aulas.module';
 
 @Module({
-  imports: [EquiposModule, MongooseModule.forRoot('mongodb://localhost/sistema-reservas')],
+  imports: [EquiposModule, AulasModule, MongooseModule.forRoot('mongodb://localhost/sistema-reservas') ],
   controllers: [AppController],
   providers: [AppService],
 })
