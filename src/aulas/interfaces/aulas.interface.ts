@@ -7,4 +7,5 @@ export interface Aula extends Document {
     imageUrl?: string;
     createdAt?: Date;
     equipos?: string[];
+    disponibilidad?: boolean;
 }

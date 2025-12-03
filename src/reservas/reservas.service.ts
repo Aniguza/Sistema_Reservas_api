@@ -414,4 +414,242 @@ export class ReservasService {
         // Hay conflicto si los rangos se solapan
         return !(fin1Min <= inicio2Min || inicio1Min >= fin2Min);
     }
+
+    // ===== GESTIÓN DE INCIDENCIAS =====
+
+    // Reportar incidencia en una reserva
+    async reportarIncidencia(
+        reservaId: string,
+        descripcion: string,
+        tipo: 'tecnica' | 'administrativa' | 'limpieza' | 'otra',
+        prioridad: 'baja' | 'media' | 'alta' | 'critica',
+        reportadoPor: string,
+    ): Promise<Reserva> {
+        const reserva = await this.reservaModel.findById(reservaId);
+
+        if (!reserva) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        const nuevaIncidencia = {
+            descripcion,
+            tipo,
+            prioridad,
+            estado: 'reportada' as const,
+            reportadoPor,
+            reportadoEn: new Date(),
+            actualizadoEn: new Date(),
+        };
+
+        if (!reserva.incidencias) {
+            reserva.incidencias = [];
+        }
+
+        reserva.incidencias.push(nuevaIncidencia);
+        reserva.updatedAt = new Date();
+
+        return await reserva.save();
+    }
+
+    // Actualizar estado de incidencia
+    async actualizarIncidencia(
+        reservaId: string,
+        incidenciaId: string,
+        estado: 'reportada' | 'en_revision' | 'en_proceso' | 'resuelta' | 'cerrada',
+        resolucion?: string,
+    ): Promise<Reserva> {
+        const reserva = await this.reservaModel.findById(reservaId);
+
+        if (!reserva) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        if (!reserva.incidencias || reserva.incidencias.length === 0) {
+            throw new HttpException(
+                'No hay incidencias en esta reserva',
+                HttpStatus.NOT_FOUND,
+            );
+        }
+
+        const incidencia = reserva.incidencias.find(
+            (inc: any) => inc._id.toString() === incidenciaId,
+        );
+
+        if (!incidencia) {
+            throw new HttpException('Incidencia no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        incidencia.estado = estado;
+        if (resolucion) {
+            incidencia.resolucion = resolucion;
+        }
+        incidencia.actualizadoEn = new Date();
+        reserva.updatedAt = new Date();
+
+        return await reserva.save();
+    }
+
+    // Obtener incidencias de una reserva
+    async getIncidenciasByReserva(reservaId: string): Promise<any[]> {
+        const reserva = await this.reservaModel.findById(reservaId);
+
+        if (!reserva) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        return reserva.incidencias || [];
+    }
+
+    // Obtener todas las incidencias con filtros
+    async getAllIncidencias(filtros?: {
+        tipo?: string;
+        estado?: string;
+        prioridad?: string;
+    }): Promise<any[]> {
+        const query: any = { 'incidencias.0': { $exists: true } };
+
+        const reservas = await this.reservaModel
+            .find(query)
+            .populate('aulas')
+            .populate('equipos')
+            .exec();
+
+        let todasLasIncidencias: any[] = [];
+
+        reservas.forEach((reserva) => {
+            if (reserva.incidencias && reserva.incidencias.length > 0) {
+                reserva.incidencias.forEach((incidencia: any) => {
+                    todasLasIncidencias.push({
+                        ...incidencia.toObject(),
+                        reservaId: reserva._id,
+                        reservaNombre: reserva.nombre,
+                        reservaFecha: reserva.fecha,
+                        aulas: reserva.aulas,
+                        equipos: reserva.equipos,
+                    });
+                });
+            }
+        });
+
+        // Aplicar filtros si existen
+        if (filtros) {
+            if (filtros.tipo) {
+                todasLasIncidencias = todasLasIncidencias.filter(
+                    (inc) => inc.tipo === filtros.tipo,
+                );
+            }
+            if (filtros.estado) {
+                todasLasIncidencias = todasLasIncidencias.filter(
+                    (inc) => inc.estado === filtros.estado,
+                );
+            }
+            if (filtros.prioridad) {
+                todasLasIncidencias = todasLasIncidencias.filter(
+                    (inc) => inc.prioridad === filtros.prioridad,
+                );
+            }
+        }
+
+        return todasLasIncidencias;
+    }
+
+    // Eliminar incidencia
+    async eliminarIncidencia(
+        reservaId: string,
+        incidenciaId: string,
+    ): Promise<Reserva> {
+        const reserva = await this.reservaModel.findById(reservaId);
+
+        if (!reserva) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        if (!reserva.incidencias || reserva.incidencias.length === 0) {
+            throw new HttpException(
+                'No hay incidencias en esta reserva',
+                HttpStatus.NOT_FOUND,
+            );
+        }
+
+        const index = reserva.incidencias.findIndex(
+            (inc: any) => inc._id.toString() === incidenciaId,
+        );
+
+        if (index === -1) {
+            throw new HttpException('Incidencia no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        reserva.incidencias.splice(index, 1);
+        reserva.updatedAt = new Date();
+
+        return await reserva.save();
+    }
+
+    // ===== CIERRE AUTOMÁTICO DE RESERVAS PASADAS =====
+
+    // Verificar y cerrar reservas que ya pasaron
+    async cerrarReservasPasadas(): Promise<{ actualizadas: number; detalles: any[] }> {
+        const ahora = new Date();
+        const detalles: any[] = [];
+
+        // Buscar reservas que ya pasaron y no están cerradas o canceladas
+        const reservasPasadas = await this.reservaModel.find({
+            estado: { $nin: ['cancelada', 'cerrada', 'cerrada_con_incidencia'] },
+        }).exec();
+
+        let actualizadas = 0;
+
+        for (const reserva of reservasPasadas) {
+            // Construir fecha y hora completa de fin de la reserva
+            const fechaReserva = new Date(reserva.fecha);
+            const [horaFin, minutosFin] = reserva.horaFin.split(':').map(Number);
+            fechaReserva.setHours(horaFin, minutosFin, 0, 0);
+
+            // Si la reserva ya pasó
+            if (fechaReserva < ahora) {
+                const tieneIncidencias = reserva.incidencias && reserva.incidencias.length > 0;
+                const estadoAnterior = reserva.estado;
+
+                if (tieneIncidencias && reserva.incidencias) {
+                    reserva.estado = 'cerrada_con_incidencia';
+                    // Cerrar todas las incidencias que no estén cerradas
+                    reserva.incidencias.forEach((inc: any) => {
+                        if (inc.estado !== 'cerrada') {
+                            inc.estado = 'cerrada';
+                            inc.actualizadoEn = new Date();
+                        }
+                    });
+                } else {
+                    reserva.estado = 'cerrada';
+                }
+
+                reserva.updatedAt = new Date();
+                await reserva.save();
+                actualizadas++;
+
+                detalles.push({
+                    reservaId: reserva._id,
+                    nombre: reserva.nombre,
+                    fecha: reserva.fecha,
+                    horaFin: reserva.horaFin,
+                    estadoAnterior,
+                    estadoNuevo: reserva.estado,
+                    incidenciasCerradas: tieneIncidencias && reserva.incidencias ? reserva.incidencias.length : 0,
+                });
+            }
+        }
+
+        return { actualizadas, detalles };
+    }
+
+    // Obtener reservas por estado
+    async getReservasByEstado(
+        estado: 'confirmada' | 'cancelada' | 'completada' | 'cerrada' | 'cerrada_con_incidencia',
+    ): Promise<Reserva[]> {
+        return await this.reservaModel
+            .find({ estado })
+            .populate('aulas')
+            .populate('equipos')
+            .exec();
+    }
 }

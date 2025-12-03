@@ -9,5 +9,5 @@ export class UpdateReservaDto {
     readonly horaInicio?: string;
     readonly horaFin?: string;
     readonly motivo?: string;
-    readonly estado?: 'pendiente' | 'confirmada' | 'cancelada' | 'completada';
+    readonly estado?: 'pendiente' | 'confirmada' | 'cancelada' | 'cerrada' | 'cerrada_con_incidencia';
 }

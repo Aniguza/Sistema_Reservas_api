@@ -14,6 +14,7 @@ import {
 import { ReservasService } from './reservas.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
+import { CreateIncidenciaDto, UpdateIncidenciaDto } from './dto/incidencia.dto';
 
 @Controller('reservas')
 export class ReservasController {
@@ -201,6 +202,154 @@ export class ReservasController {
                     ? 'Los recursos están disponibles'
                     : 'Los recursos no están disponibles en el horario seleccionado',
             });
+        } catch (error) {
+            return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
+    // ===== ENDPOINTS DE INCIDENCIAS =====
+
+    // Reportar incidencia en una reserva
+    @Post(':id/incidencias')
+    async reportarIncidencia(
+        @Res() res,
+        @Param('id') reservaId: string,
+        @Body() body: CreateIncidenciaDto & { reportadoPor: string },
+    ) {
+        try {
+            const reserva = await this.reservasService.reportarIncidencia(
+                reservaId,
+                body.descripcion,
+                body.tipo,
+                body.prioridad,
+                body.reportadoPor,
+            );
+            return res.status(HttpStatus.CREATED).json({
+                message: 'Incidencia reportada exitosamente',
+                reserva,
+            });
+        } catch (error) {
+            return res.status(error.status || HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
+    // Obtener incidencias de una reserva específica
+    @Get(':id/incidencias')
+    async getIncidenciasByReserva(@Res() res, @Param('id') reservaId: string) {
+        try {
+            const incidencias = await this.reservasService.getIncidenciasByReserva(reservaId);
+            return res.status(HttpStatus.OK).json(incidencias);
+        } catch (error) {
+            return res.status(error.status || HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
+    // Obtener todas las incidencias con filtros opcionales
+    @Get('incidencias/todas')
+    async getAllIncidencias(
+        @Res() res,
+        @Query('tipo') tipo?: string,
+        @Query('estado') estado?: string,
+        @Query('prioridad') prioridad?: string,
+    ) {
+        try {
+            const filtros: any = {};
+            if (tipo) filtros.tipo = tipo;
+            if (estado) filtros.estado = estado;
+            if (prioridad) filtros.prioridad = prioridad;
+
+            const incidencias = await this.reservasService.getAllIncidencias(filtros);
+            return res.status(HttpStatus.OK).json(incidencias);
+        } catch (error) {
+            return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
+    // Actualizar estado de una incidencia
+    @Patch(':reservaId/incidencias/:incidenciaId')
+    async actualizarIncidencia(
+        @Res() res,
+        @Param('reservaId') reservaId: string,
+        @Param('incidenciaId') incidenciaId: string,
+        @Body() body: UpdateIncidenciaDto & { estado: 'reportada' | 'en_revision' | 'en_proceso' | 'resuelta' | 'cerrada' },
+    ) {
+        try {
+            const reserva = await this.reservasService.actualizarIncidencia(
+                reservaId,
+                incidenciaId,
+                body.estado,
+                body.resolucion,
+            );
+            return res.status(HttpStatus.OK).json({
+                message: 'Incidencia actualizada exitosamente',
+                reserva,
+            });
+        } catch (error) {
+            return res.status(error.status || HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
+    // Eliminar incidencia
+    @Delete(':reservaId/incidencias/:incidenciaId')
+    async eliminarIncidencia(
+        @Res() res,
+        @Param('reservaId') reservaId: string,
+        @Param('incidenciaId') incidenciaId: string,
+    ) {
+        try {
+            const reserva = await this.reservasService.eliminarIncidencia(
+                reservaId,
+                incidenciaId,
+            );
+            return res.status(HttpStatus.OK).json({
+                message: 'Incidencia eliminada exitosamente',
+                reserva,
+            });
+        } catch (error) {
+            return res.status(error.status || HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
+    // ===== CIERRE AUTOMÁTICO DE RESERVAS =====
+
+    // Cerrar reservas que ya pasaron su fecha y hora
+    @Patch('admin/cerrar-reservas-pasadas')
+    async cerrarReservasPasadas(@Res() res) {
+        try {
+            const resultado = await this.reservasService.cerrarReservasPasadas();
+            return res.status(HttpStatus.OK).json({
+                message: `Se cerraron ${resultado.actualizadas} reservas exitosamente`,
+                actualizadas: resultado.actualizadas,
+                detalles: resultado.detalles,
+            });
+        } catch (error) {
+            return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
+    // Obtener reservas por estado
+    @Get('estado/:estado')
+    async getReservasByEstado(
+        @Res() res,
+        @Param('estado') estado: 'confirmada' | 'cancelada' | 'completada' | 'cerrada' | 'cerrada_con_incidencia',
+    ) {
+        try {
+            const reservas = await this.reservasService.getReservasByEstado(estado);
+            return res.status(HttpStatus.OK).json(reservas);
         } catch (error) {
             return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
                 message: error.message,

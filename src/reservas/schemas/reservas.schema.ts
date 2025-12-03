@@ -13,9 +13,31 @@ export const reservasSchema = new Schema({
   motivo: { type: String, required: true },
   estado: {
     type: String,
-    enum: ['confirmada', 'reprogramada', 'cancelada', 'completada'],
+    enum: ['confirmada', 'reprogramada', 'cancelada', 'cerrada', 'cerrada_con_incidencia'],
     default: 'confirmada'
   },
+  incidencias: [{
+    descripcion: { type: String, required: true },
+    tipo: { 
+      type: String, 
+      enum: ['tecnica', 'administrativa', 'limpieza', 'otra'],
+      required: true 
+    },
+    prioridad: { 
+      type: String, 
+      enum: ['baja', 'media', 'alta', 'critica'],
+      default: 'media'
+    },
+    estado: {
+      type: String,
+      enum: ['reportada', 'en_revision', 'en_proceso', 'resuelta', 'cerrada'],
+      default: 'reportada'
+    },
+    resolucion: { type: String, required: false },
+    reportadoPor: { type: String, required: true },
+    reportadoEn: { type: Date, default: Date.now },
+    actualizadoEn: { type: Date, default: Date.now }
+  }],
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

@@ -9,7 +9,7 @@ import { UsuariosModule } from './usuarios/usuarios.module';
 import { AuthModule } from './auth/auth.module';
 
 @Module({
-  imports: [EquiposModule, AulasModule, ReservasModule, UsuariosModule, AuthModule, MongooseModule.forRoot('mongodb://localhost/sistema-reservas')],
+  imports: [EquiposModule, AulasModule, ReservasModule, UsuariosModule, AuthModule, MongooseModule.forRoot('mongodb+srv://reservas_db:sistema_ana_paty@sistemareservas.ovhqk5w.mongodb.net/')],
   controllers: [AppController],
   providers: [AppService],
 })
