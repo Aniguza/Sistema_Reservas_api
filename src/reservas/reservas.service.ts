@@ -20,19 +20,20 @@ export class ReservasService {
         const { tipo, aula, equipos, fecha, horaInicio, horaFin } = createReservaDto;
 
         // ===== VALIDACIÓN: 2 DÍAS DE ANTICIPACIÓN =====
+        // COMENTADO TEMPORALMENTE PARA PRUEBAS
         const fechaReserva = new Date(fecha);
         const hoy = new Date();
         hoy.setHours(0, 0, 0, 0);
         fechaReserva.setHours(0, 0, 0, 0);
 
-        const diferenciaDias = Math.ceil((fechaReserva.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
+        /* const diferenciaDias = Math.ceil((fechaReserva.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
 
         if (diferenciaDias < 2) {
             throw new HttpException(
                 'Las reservas deben realizarse con al menos 2 días de anticipación',
                 HttpStatus.BAD_REQUEST,
             );
-        }
+        } */
 
         let aulasIds: string[] = [];
 
@@ -156,12 +157,28 @@ export class ReservasService {
             );
         }
 
+        // Normalizar la fecha para evitar problemas de zona horaria
+        const fechaNormalizada = new Date(fecha);
+        fechaNormalizada.setHours(12, 0, 0, 0); // Establecer al mediodía para evitar cambios de día
+
+        // Determinar el estado inicial según si la reserva ya pasó
+        const ahora = new Date();
+        const [horaFinNum, minutosFinNum] = horaFin.split(':').map(Number);
+        const fechaFinReserva = new Date(fecha);
+        fechaFinReserva.setHours(horaFinNum, minutosFinNum, 0, 0);
+
+        let estadoInicial = 'confirmada';
+        if (fechaFinReserva < ahora) {
+            estadoInicial = 'cerrada'; // Si ya pasó, marcarla como cerrada
+        }
+
         // Crear la reserva
         const nuevaReserva = new this.reservaModel({
             ...createReservaDto,
+            fecha: fechaNormalizada, // Usar fecha normalizada
             aulas: aulasIds,
             equipos: tipo === 'equipo' ? equipos : [],
-            estado: 'confirmada',
+            estado: estadoInicial,
         });
 
         return await nuevaReserva.save();

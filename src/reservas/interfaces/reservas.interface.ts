@@ -23,7 +23,7 @@ export interface Reserva extends Document {
     horaInicio: string;
     horaFin: string;
     motivo: string;
-    estado: 'pendiente' | 'confirmada' | 'cancelada' | 'cerrada' | 'cerrada_con_incidencia';
+    estado: 'pendiente' | 'confirmada' | 'en_curso' | 'cancelada' |  'cerrada' | 'cerrada_con_incidencia';
     incidencias?: Incidencia[];
     createdAt?: Date;
     updatedAt?: Date;
