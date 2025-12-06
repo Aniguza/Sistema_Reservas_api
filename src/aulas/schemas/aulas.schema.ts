@@ -6,6 +6,11 @@ export const aulasSchema = new Schema({
   description: { type: String, required: false },
   imageUrl: { type: String, required: false },
   createdAt: { type: Date, default: Date.now },
-  disponibilidad: { type: Boolean, required: false, default: true  },
+  disponibilidad: { 
+    type: String, 
+    enum: ['disponible', 'ocupada', 'en mantenimiento'],
+    required: false, 
+    default: 'disponible' 
+  },
   equipos: [{ type: Schema.Types.ObjectId, ref: 'Equipo', required: false }],
 });

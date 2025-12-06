@@ -66,6 +66,22 @@ export class AulasController {
     }
 
 
+    @Put('/update/:id')
+    async updateAula(@Res() res, @Param('id') id: string, @Body() createAulasDTO: CreateAulasDTO) {
+        try {
+            const updatedAula = await this.aulasService.updateAula(id, createAulasDTO);
+            return res.status(HttpStatus.OK).json({
+                message: 'Aula updated successfully',
+                updatedAula,
+            });
+        } catch (error) {
+            return res.status(HttpStatus.NOT_FOUND).json({
+                message: 'Aula not found',
+                error: error.message,
+            });
+        }
+    }
+
     @Delete('/delete/:id')
     async deleteAula(@Res() res, @Param('id') id: string) {
         try {
@@ -129,4 +145,6 @@ export class AulasController {
             });
         }
     }
+    
+    
 }

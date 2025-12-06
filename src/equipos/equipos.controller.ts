@@ -7,6 +7,8 @@ import { EquiposService } from './equipos.service';
 export class EquiposController {
     constructor(private readonly equiposService: EquiposService) { }
 
+
+    
     @Post('/create')
     async createEquipo(@Res() response, @Body() createEquipoDTO: CreateEquipoDTO) {
         try {

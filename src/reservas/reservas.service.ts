@@ -81,12 +81,52 @@ export class ReservasService {
 
             if (aulas.length === 0) {
                 throw new HttpException(
-                    'No se encontraron aulas para los equipos seleccionados. Verifica que los equipos estén asociados a un aula.',
-                    HttpStatus.NOT_FOUND,
+                    'Los equipos seleccionados no están asociados a ningún aula. Todos los equipos deben pertenecer a un aula.',
+                    HttpStatus.BAD_REQUEST,
                 );
             }
 
-            aulasIds = aulas.map((a: any) => a._id.toString());
+            // ===== VALIDACIÓN CRÍTICA: Todos los equipos deben pertenecer a LA MISMA AULA =====
+            // Verificar que todos los equipos pertenezcan a una única aula
+            const aulasUnicas = new Set<string>();
+            
+            for (const aulaDoc of aulas) {
+                const aula: any = aulaDoc;
+                // Verificar si esta aula contiene alguno de los equipos seleccionados
+                if (aula.equipos && aula.equipos.length > 0) {
+                    const tieneEquipos = aula.equipos.some((equipo: any) =>
+                        equipos.includes(equipo._id.toString())
+                    );
+                    if (tieneEquipos) {
+                        aulasUnicas.add(aula._id.toString());
+                    }
+                }
+            }
+
+            // Si los equipos pertenecen a más de un aula, rechazar
+            if (aulasUnicas.size > 1) {
+                throw new HttpException(
+                    'Los equipos seleccionados pertenecen a diferentes aulas. Solo puede reservar equipos que estén en la misma aula.',
+                    HttpStatus.BAD_REQUEST,
+                );
+            }
+
+            // Verificar que TODOS los equipos seleccionados estén en el aula encontrada
+            const aulaFinal: any = aulas[0];
+            const equiposEnAula = aulaFinal.equipos.map((e: any) => e._id.toString());
+            
+            const todosLosEquiposEnAula = equipos.every((equipoId: string) =>
+                equiposEnAula.includes(equipoId)
+            );
+
+            if (!todosLosEquiposEnAula) {
+                throw new HttpException(
+                    'No todos los equipos seleccionados pertenecen a la misma aula. Debe seleccionar equipos de una única aula.',
+                    HttpStatus.BAD_REQUEST,
+                );
+            }
+
+            aulasIds = [aulaFinal._id.toString()];
         } else if (tipo === 'aula') {
             // Si el tipo es 'aula', verificar que existe
             if (!aula) {

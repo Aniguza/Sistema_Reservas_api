@@ -4,6 +4,6 @@ export class CreateAulasDTO {
     readonly description: string;
     readonly imageUrl: string;
     readonly createdAt: Date;
-    readonly disponibilidad: boolean;
+    readonly disponibilidad: 'disponible' | 'ocupada' | 'en mantenimiento';
     readonly equipos: string[];
 }

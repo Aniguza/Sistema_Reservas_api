@@ -8,5 +8,10 @@ export const equiposSchema = new Schema({
   imageUrl: { type: String, required: false },
   createdAt: { type: Date, default: Date.now },
   category: { type: String, required: false },
-  disponibilidad: { type: Boolean, required: false, default: true },
+  disponibilidad: { 
+    type: String, 
+    enum: ['disponible', 'no disponible', 'ocupado', 'en mantenimiento'],
+    required: false, 
+    default: 'disponible' 
+  },
 });

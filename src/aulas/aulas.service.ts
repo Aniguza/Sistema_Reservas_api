@@ -120,4 +120,5 @@ export class AulasService {
 
         return reservasConflicto.length === 0;
     }
+    
 }

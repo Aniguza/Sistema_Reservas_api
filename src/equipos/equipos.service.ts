@@ -99,8 +99,8 @@ export class EquiposService {
     ): Promise<boolean> {
         const equipo = await this.getEquipoById(equipoID);
         
-        // Si el equipo está marcado como no disponible en general
-        if (equipo.disponibilidad === false) {
+        
+        if (equipo.disponibilidad === 'no disponible' || equipo.disponibilidad === 'en mantenimiento' || equipo.disponibilidad === 'ocupado') {
             return false;
         }
 

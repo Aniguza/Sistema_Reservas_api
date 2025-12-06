@@ -8,5 +8,5 @@ export interface Equipo extends Document {
   imageUrl?: string;
   createdAt?: Date;
   category?: string;
-  disponibilidad?: boolean;
+  disponibilidad?: 'disponible' | 'no disponible' | 'ocupado' | 'en mantenimiento';
 }

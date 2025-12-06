@@ -6,5 +6,5 @@ export class CreateEquipoDTO {
     readonly imageUrl: string;
     readonly createdAt: Date;
     readonly category: string;
-    readonly disponibilidad: boolean;
+    readonly disponibilidad: 'disponible' | 'no disponible' | 'ocupado' | 'en mantenimiento';
 }
