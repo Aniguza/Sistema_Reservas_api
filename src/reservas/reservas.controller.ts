@@ -10,18 +10,24 @@ import {
     HttpStatus,
     Res,
     Query,
+    UseGuards,
 } from '@nestjs/common';
 import { ReservasService } from './reservas.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
 import { CreateIncidenciaDto, UpdateIncidenciaDto } from './dto/incidencia.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 
 @Controller('reservas')
 export class ReservasController {
     constructor(private readonly reservasService: ReservasService) { }
 
-    // Crear nueva reserva
+    // Crear nueva reserva (SOLO ALUMNOS Y DOCENTES)
     @Post('/create')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('alumno', 'docente')
     async createReserva(@Res() res, @Body() createReservaDto: CreateReservaDto) {
         try {
             const reserva = await this.reservasService.createReserva(createReservaDto);
@@ -36,8 +42,25 @@ export class ReservasController {
         }
     }
 
-    // Obtener todas las reservas
+    // Obtener estadísticas agregadas para el dashboard (SOLO ADMIN)
+    @Get('/dashboard/stats')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
+    async getDashboardStats(@Res() res) {
+        try {
+            const stats = await this.reservasService.getDashboardStats();
+            return res.status(HttpStatus.OK).json(stats);
+        } catch (error) {
+            return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
+    // Obtener todas las reservas (SOLO ADMIN)
     @Get('/')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
     async getAllReservas(@Res() res) {
         try {
             const reservas = await this.reservasService.getAllReservas();
@@ -49,8 +72,9 @@ export class ReservasController {
         }
     }
 
-    // Obtener reserva por ID
+    // Obtener reserva por ID (TODOS AUTENTICADOS)
     @Get('/:id')
+    @UseGuards(JwtAuthGuard)
     async getReservaById(@Res() res, @Param('id') id: string) {
         try {
             const reserva = await this.reservasService.getReservaById(id);
@@ -62,8 +86,10 @@ export class ReservasController {
         }
     }
 
-    // Actualizar reserva
+    // Actualizar reserva (SOLO ADMIN)
     @Put('/update/:id')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
     async updateReserva(
         @Res() res,
         @Param('id') id: string,
@@ -82,8 +108,10 @@ export class ReservasController {
         }
     }
 
-    // Reprogramar reserva
+    // Reprogramar reserva (ALUMNOS Y DOCENTES)
     @Patch('/reprogramar/:id')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('alumno', 'docente')
     async reprogramarReserva(
         @Res() res,
         @Param('id') id: string,
@@ -108,8 +136,9 @@ export class ReservasController {
         }
     }
 
-    // Cancelar reserva (admin o mismo usuario)
+    // Cancelar reserva (ALUMNOS, DOCENTES Y ADMIN)
     @Patch('/cancelar/:id')
+    @UseGuards(JwtAuthGuard)
     async cancelarReserva(
         @Res() res,
         @Param('id') id: string,
@@ -133,8 +162,10 @@ export class ReservasController {
         }
     }
 
-    // Eliminar reserva
+    // Eliminar reserva (SOLO ADMIN)
     @Delete('/delete/:id')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
     async deleteReserva(@Res() res, @Param('id') id: string) {
         try {
             const reserva = await this.reservasService.deleteReserva(id);
@@ -175,14 +206,29 @@ export class ReservasController {
         }
     }
 
-    // Verificar disponibilidad
+    // Obtener reservas por usuario (correo)
+    @Get('usuario/:correo')
+    async getReservasByUsuario(@Res() res, @Param('correo') correo: string) {
+        try {
+            const reservas = await this.reservasService.getReservasByUsuario(correo);
+            return res.status(HttpStatus.OK).json(reservas);
+        } catch (error) {
+            return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
+    // Verificar disponibilidad (ALUMNOS Y DOCENTES)
     @Post('disponibilidad')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('alumno', 'docente')
     async checkDisponibilidad(
         @Res() res,
         @Body()
         body: {
             aulas?: string[];
-            equipos?: string[];
+            equipos?: { equipo: string; nombre: string; cantidad: number }[];
             fecha: Date;
             horaInicio: string;
             horaFin: string;

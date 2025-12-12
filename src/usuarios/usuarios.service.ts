@@ -128,4 +128,55 @@ export class UsuariosService {
 
         return usuario;
     }
+
+    // Obtener perfil completo del usuario por correo (para página de perfil)
+    async getPerfilByCorreo(correo: string): Promise<any> {
+        const usuario = await this.usuarioModel
+            .findOne({ correo: correo })
+            .select('-contraseña')
+            .exec();
+
+        if (!usuario) {
+            throw new HttpException('Usuario no encontrado', HttpStatus.NOT_FOUND);
+        }
+
+        const usuarioObj: any = usuario.toObject();
+
+        // Extraer código del correo (parte antes del @)
+        usuarioObj.codigo = correo.split('@')[0];
+
+        // Si es administrador, no incluir estadísticas de reservas
+        if (usuarioObj.rol === 'administrador') {
+            return usuarioObj;
+        }
+
+        // Para alumnos y docentes, obtener estadísticas de reservas
+        const Reserva = this.usuarioModel.db.model('Reserva');
+        
+        const [totalReservas, reservasActivas, reservasPasadas, reservasCanceladas] = await Promise.all([
+            Reserva.countDocuments({ correo: correo }).exec(),
+            Reserva.countDocuments({ 
+                correo: correo, 
+                estado: { $in: ['confirmada', 'reprogramada', 'en_curso'] } 
+            }).exec(),
+            Reserva.countDocuments({ 
+                correo: correo, 
+                estado: { $in: ['cerrada', 'cerrada_con_incidencia'] } 
+            }).exec(),
+            Reserva.countDocuments({ 
+                correo: correo, 
+                estado: 'cancelada' 
+            }).exec()
+        ]);
+
+        return {
+            ...usuarioObj,
+            estadisticas: {
+                totalReservas,
+                reservasActivas,
+                reservasPasadas,
+                reservasCanceladas
+            }
+        };
+    }
 }

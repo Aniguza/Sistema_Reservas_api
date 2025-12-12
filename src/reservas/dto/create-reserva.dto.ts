@@ -4,7 +4,7 @@ export class CreateReservaDto {
     readonly companeros?: string[]; // Códigos universitarios de compañeros
     readonly tipo: 'aula' | 'equipo';
     readonly aula?: string; // ID del aula (solo si tipo es 'aula')
-    readonly equipos?: string[]; // Array de IDs de equipos (solo si tipo es 'equipo')
+    readonly equipos?: { equipo: string; nombre: string; cantidad: number }[]; // Array de equipos con nombre y cantidad
     readonly fecha: Date;
     readonly horaInicio: string; // Formato: "HH:mm"
     readonly horaFin: string; // Formato: "HH:mm"

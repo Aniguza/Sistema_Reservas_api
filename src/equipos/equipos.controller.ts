@@ -1,15 +1,20 @@
-import { Controller, Get, Post, Put, Delete, Res, HttpStatus, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Res, HttpStatus, Body, Param, Query, UseGuards } from '@nestjs/common';
 
 import { CreateEquipoDTO } from './dto/equipos.dto';
 import { EquiposService } from './equipos.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 
 @Controller('equipos')
 export class EquiposController {
     constructor(private readonly equiposService: EquiposService) { }
 
 
-    
+    // Crear equipo (SOLO ADMIN)
     @Post('/create')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
     async createEquipo(@Res() response, @Body() createEquipoDTO: CreateEquipoDTO) {
         try {
             const nuevoEquipo = await this.equiposService.createEquipo(createEquipoDTO);
@@ -25,6 +30,7 @@ export class EquiposController {
         }
     }
 
+    // Obtener todos los equipos (PÚBLICO)
     @Get('/')
     async getAllEquipos(@Res() response) {
         try {
@@ -53,7 +59,9 @@ export class EquiposController {
         }
     }
 
+    // Obtener equipo por ID (USUARIOS AUTENTICADOS)
     @Get('/:id')
+    @UseGuards(JwtAuthGuard)
     async getEquipoById(@Res() response, @Param('id') id: string) {
         try {
             const equipo = await this.equiposService.getEquipoById(id);
@@ -66,7 +74,10 @@ export class EquiposController {
         }
     }
 
+    // Actualizar equipo (SOLO ADMIN)
     @Put('/update/:id')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
     async updateEquipo(@Res() response, @Param('id') id: string, @Body() createEquipoDTO: CreateEquipoDTO) {
         try {
             const updatedEquipo = await this.equiposService.updateEquipo(id, createEquipoDTO);
@@ -82,7 +93,10 @@ export class EquiposController {
         }
     }
 
+    // Eliminar equipo (SOLO ADMIN)
     @Delete('/delete/:id')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
     async deleteEquipo(@Res() response, @Param('id') id: string) {
         try {
             const deletedEquipo = await this.equiposService.deleteEquipo(id);
@@ -100,6 +114,7 @@ export class EquiposController {
 
     // Nuevo endpoint: Obtener fechas reservadas de un equipo específico
     @Get('/:id/fechas-reservadas')
+    @UseGuards(JwtAuthGuard)
     async getFechasReservadas(@Res() response, @Param('id') id: string) {
         try {
             const fechasReservadas = await this.equiposService.getFechasReservadas(id);
@@ -117,6 +132,7 @@ export class EquiposController {
 
     // Nuevo endpoint: Verificar disponibilidad de un equipo en fecha/hora específica
     @Get('/:id/verificar-disponibilidad')
+    @UseGuards(JwtAuthGuard)
     async verificarDisponibilidad(
         @Res() response, 
         @Param('id') id: string,

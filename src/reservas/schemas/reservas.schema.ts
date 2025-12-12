@@ -6,7 +6,11 @@ export const reservasSchema = new Schema({
   companeros: [{ type: String, required: false }], // Array de códigos universitarios
   tipo: { type: String, enum: ['aula', 'equipo'], required: true },
   aulas: [{ type: Schema.Types.ObjectId, ref: 'Aula', required: false }], // Array de aulas
-  equipos: [{ type: Schema.Types.ObjectId, ref: 'Equipo', required: false }], // Array de equipos
+  equipos: [{
+    equipo: { type: Schema.Types.ObjectId, ref: 'Equipo', required: false },
+    nombre: { type: String, required: false }, // Nombre del equipo
+    cantidad: { type: Number, required: false, default: 1 }
+  }],
   fecha: { type: Date, required: true },
   horaInicio: { type: String, required: true }, // Formato: "HH:mm"
   horaFin: { type: String, required: true }, // Formato: "HH:mm"
@@ -37,6 +41,16 @@ export const reservasSchema = new Schema({
     reportadoPor: { type: String, required: true },
     reportadoEn: { type: Date, default: Date.now },
     actualizadoEn: { type: Date, default: Date.now }
+  }],
+  reprogramaciones: [{
+    fechaReprogramacion: { type: Date, default: Date.now },
+    fechaAnterior: { type: Date, required: true },
+    fechaNueva: { type: Date, required: true },
+    horaInicioAnterior: { type: String, required: true },
+    horaInicioNueva: { type: String, required: true },
+    horaFinAnterior: { type: String, required: true },
+    horaFinNueva: { type: String, required: true },
+    motivo: { type: String, required: false }
   }],
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },

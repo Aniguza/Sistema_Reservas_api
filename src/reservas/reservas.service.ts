@@ -46,9 +46,12 @@ export class ReservasService {
                 );
             }
 
+            // Extraer IDs de equipos del array con cantidades
+            const equiposIds = equipos.map((e: any) => e.equipo);
+
             // Verificar que todos los equipos existen
             const equiposEncontrados = await this.equipoModel.find({
-                _id: { $in: equipos },
+                _id: { $in: equiposIds },
             });
 
             if (equiposEncontrados.length !== equipos.length) {
@@ -60,10 +63,10 @@ export class ReservasService {
 
             // Buscar las aulas que contienen estos equipos
             let aulas = await this.aulaModel.find({
-                equipos: { $in: equipos },
+                equipos: { $in: equiposIds },
             }).populate('equipos');
 
-            console.log('Equipos buscados:', equipos);
+            console.log('Equipos buscados:', equiposIds);
             console.log('Aulas encontradas con $in:', aulas.length);
 
             // Si no se encuentran aulas, intentar búsqueda alternativa
@@ -72,7 +75,7 @@ export class ReservasService {
                 aulas = todasLasAulas.filter((aula: any) => {
                     if (!aula.equipos || aula.equipos.length === 0) return false;
                     return aula.equipos.some((equipo: any) =>
-                        equipos.includes(equipo._id.toString())
+                        equiposIds.includes(equipo._id.toString())
                     );
                 });
 
@@ -95,7 +98,7 @@ export class ReservasService {
                 // Verificar si esta aula contiene alguno de los equipos seleccionados
                 if (aula.equipos && aula.equipos.length > 0) {
                     const tieneEquipos = aula.equipos.some((equipo: any) =>
-                        equipos.includes(equipo._id.toString())
+                        equiposIds.includes(equipo._id.toString())
                     );
                     if (tieneEquipos) {
                         aulasUnicas.add(aula._id.toString());
@@ -115,7 +118,7 @@ export class ReservasService {
             const aulaFinal: any = aulas[0];
             const equiposEnAula = aulaFinal.equipos.map((e: any) => e._id.toString());
             
-            const todosLosEquiposEnAula = equipos.every((equipoId: string) =>
+            const todosLosEquiposEnAula = equiposIds.every((equipoId: string) =>
                 equiposEnAula.includes(equipoId)
             );
 
@@ -181,7 +184,7 @@ export class ReservasService {
             }
         }
 
-        // Validar disponibilidad en el horario específico
+        // Validar disponibilidad en el horario específico (incluye cantidades por equipo)
         const disponible = await this.checkDisponibilidad(
             aulasIds,
             equipos || [],
@@ -212,40 +215,144 @@ export class ReservasService {
             estadoInicial = 'cerrada'; // Si ya pasó, marcarla como cerrada
         }
 
+        // Enriquecer equipos con nombres si no los tienen
+        let equiposConNombres = equipos || [];
+        if (tipo === 'equipo' && equipos && equipos.length > 0) {
+            equiposConNombres = await Promise.all(
+                equipos.map(async (eq: any) => {
+                    if (!eq.nombre) {
+                        const equipoDoc: any = await this.equipoModel.findById(eq.equipo).exec();
+                        return {
+                            equipo: eq.equipo,
+                            nombre: equipoDoc ? equipoDoc.name : 'Desconocido',
+                            cantidad: eq.cantidad || 1
+                        };
+                    }
+                    return eq;
+                })
+            );
+        }
+
         // Crear la reserva
         const nuevaReserva = new this.reservaModel({
             ...createReservaDto,
             fecha: fechaNormalizada, // Usar fecha normalizada
             aulas: aulasIds,
-            equipos: tipo === 'equipo' ? equipos : [],
+            equipos: tipo === 'equipo' ? equiposConNombres : [],
             estado: estadoInicial,
         });
 
-        return await nuevaReserva.save();
+        const saved = await nuevaReserva.save();
+
+        // Actualizar disponibilidad de los equipos si al reservar se agotó el stock
+        if (tipo === 'equipo' && equipos && equipos.length > 0) {
+            for (const req of equipos) {
+                try {
+                    const equipoDoc: any = await this.equipoModel.findById(req.equipo).exec();
+                    if (!equipoDoc) continue;
+
+                    // Calcular cantidad reservada en ese intervalo (incluyendo la reserva recién creada)
+                    const reservasMismaFecha = await this.reservaModel.find({
+                        fecha: fecha,
+                        estado: { $in: ['pendiente', 'confirmada'] },
+                        'equipos.equipo': req.equipo,
+                    }).exec();
+
+                    let totalReservado = 0;
+                    for (const r of reservasMismaFecha) {
+                        const reserva: any = r;
+                        // Revisar solapamiento horario
+                        if (this.hayConflictoHorario(horaInicio, horaFin, reserva.horaInicio, reserva.horaFin)) {
+                            if (reserva.equipos && reserva.equipos.length > 0) {
+                                const match = reserva.equipos.find((ec: any) => ec.equipo.toString() === req.equipo.toString());
+                                if (match) totalReservado += (match.cantidad || 1);
+                            }
+                        }
+                    }
+
+                    const restante = (equipoDoc.quantity || 0) - totalReservado;
+                    if (restante <= 0) {
+                        await this.equipoModel.findByIdAndUpdate(req.equipo, { disponibilidad: 'ocupado' }).exec();
+                    }
+                } catch (err) {
+                    // No bloquear por errores de actualización de equipo
+                    console.warn('Error actualizando disponibilidad de equipo:', err.message || err);
+                }
+            }
+        }
+
+        // Retornar la reserva guardada con las aulas pobladas
+        const reservaFinal = await this.reservaModel
+            .findById(saved._id)
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .exec();
+        
+        if (!reservaFinal) {
+            throw new HttpException('Error al recuperar la reserva creada', HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+
+        // Transformar la respuesta para aplanar la estructura de equipos
+        const reservaObj: any = reservaFinal.toObject();
+        if (reservaObj.equipos && reservaObj.equipos.length > 0) {
+            reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
+                equipo: eq.equipo?._id || eq.equipo,
+                nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
+                cantidad: eq.cantidad || 1,
+                _id: eq._id
+            }));
+        }
+
+        return reservaObj;
     }
 
     // Obtener todas las reservas
     async getAllReservas(): Promise<Reserva[]> {
-        return await this.reservaModel
+        const reservas = await this.reservaModel
             .find()
-            .populate('aulas')
-            .populate('equipos')
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
             .exec();
+
+        // Transformar la respuesta para aplanar la estructura de equipos
+        return reservas.map((reserva: any) => {
+            const reservaObj = reserva.toObject();
+            if (reservaObj.equipos && reservaObj.equipos.length > 0) {
+                reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
+                    equipo: eq.equipo?._id || eq.equipo,
+                    nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
+                    cantidad: eq.cantidad || 1,
+                    _id: eq._id
+                }));
+            }
+            return reservaObj;
+        });
     }
 
     // Obtener reserva por ID
     async getReservaById(id: string): Promise<Reserva> {
         const reserva = await this.reservaModel
             .findById(id)
-            .populate('aulas')
-            .populate('equipos')
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
             .exec();
 
         if (!reserva) {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
-        return reserva;
+        // Transformar la respuesta para aplanar la estructura de equipos
+        const reservaObj: any = reserva.toObject();
+        if (reservaObj.equipos && reservaObj.equipos.length > 0) {
+            reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
+                equipo: eq.equipo?._id || eq.equipo,
+                nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
+                cantidad: eq.cantidad || 1,
+                _id: eq._id
+            }));
+        }
+
+        return reservaObj;
     }
 
     // Actualizar reserva
@@ -274,7 +381,7 @@ export class ReservasService {
         horaFin: string,
         motivo?: string,
     ): Promise<Reserva> {
-        const reserva = await this.reservaModel.findById(id).populate('aulas');
+        const reserva = await this.reservaModel.findById(id);
 
         if (!reserva) {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
@@ -319,13 +426,27 @@ export class ReservasService {
             );
         }
 
-        // Guardar información de la reprogramación
+        // Guardar datos anteriores en historial de reprogramaciones
+        if (!reserva.reprogramaciones) {
+            reserva.reprogramaciones = [];
+        }
+
+        reserva.reprogramaciones.push({
+            fechaReprogramacion: new Date(),
+            fechaAnterior: reserva.fecha,
+            fechaNueva: fecha,
+            horaInicioAnterior: reserva.horaInicio,
+            horaInicioNueva: horaInicio,
+            horaFinAnterior: reserva.horaFin,
+            horaFinNueva: horaFin,
+            motivo: motivo || 'Sin motivo especificado'
+        });
+
+        // Actualizar con nuevos datos
         reserva.fecha = fecha;
         reserva.horaInicio = horaInicio;
         reserva.horaFin = horaFin;
-        if (motivo) {
-            reserva.motivo = `${reserva.motivo} [REPROGRAMADA: ${motivo}]`;
-        }
+        reserva.estado = 'reprogramada';
         reserva.updatedAt = new Date();
 
         return await reserva.save();
@@ -392,26 +513,114 @@ export class ReservasService {
 
     // Obtener reservas por aula
     async getReservasByAula(aulaId: string): Promise<Reserva[]> {
-        return await this.reservaModel
+        const reservas = await this.reservaModel
             .find({ aulas: aulaId })
-            .populate('aulas')
-            .populate('equipos')
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
             .exec();
+
+        // Transformar la respuesta para aplanar la estructura de equipos
+        return reservas.map((reserva: any) => {
+            const reservaObj = reserva.toObject();
+            if (reservaObj.equipos && reservaObj.equipos.length > 0) {
+                reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
+                    equipo: eq.equipo?._id || eq.equipo,
+                    nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
+                    cantidad: eq.cantidad || 1,
+                    _id: eq._id
+                }));
+            }
+            return reservaObj;
+        });
     }
 
     // Obtener reservas por equipo
     async getReservasByEquipo(equipoId: string): Promise<Reserva[]> {
-        return await this.reservaModel
-            .find({ equipos: equipoId })
-            .populate('aulas')
-            .populate('equipos')
+        const reservas = await this.reservaModel
+            .find({ 'equipos.equipo': equipoId })
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
             .exec();
+
+        // Transformar la respuesta para aplanar la estructura de equipos
+        return reservas.map((reserva: any) => {
+            const reservaObj = reserva.toObject();
+            if (reservaObj.equipos && reservaObj.equipos.length > 0) {
+                reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
+                    equipo: eq.equipo?._id || eq.equipo,
+                    nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
+                    cantidad: eq.cantidad || 1,
+                    _id: eq._id
+                }));
+            }
+            return reservaObj;
+        });
+    }
+
+    // Obtener reservas por usuario (correo)
+    async getReservasByUsuario(correo: string): Promise<any[]> {
+        const reservas = await this.reservaModel
+            .find({ correo: correo })
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .sort({ fecha: -1 }) // Ordenar por fecha descendente (más recientes primero)
+            .exec();
+
+        // Transformar la respuesta y enriquecer con nombres de compañeros
+        const reservasEnriquecidas = await Promise.all(
+            reservas.map(async (reserva: any) => {
+                const reservaObj = reserva.toObject();
+                
+                // Aplanar estructura de equipos
+                if (reservaObj.equipos && reservaObj.equipos.length > 0) {
+                    reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
+                        equipo: eq.equipo?._id || eq.equipo,
+                        nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
+                        cantidad: eq.cantidad || 1,
+                        _id: eq._id
+                    }));
+                }
+
+                // Enriquecer compañeros con sus nombres
+                if (reservaObj.companeros && reservaObj.companeros.length > 0) {
+                    try {
+                        const Usuario = this.reservaModel.db.model('Usuario');
+                        const usuarios = await Usuario.find(
+                            { _id: { $in: reservaObj.companeros } },
+                            '_id correo nombre'
+                        ).exec();
+
+                        reservaObj.companeros = reservaObj.companeros.map((id: string) => {
+                            const usuario = usuarios.find((u: any) => u._id.toString() === id);
+                            const codigo = usuario?.correo ? usuario.correo.split('@')[0] : 'Sin código';
+                            return {
+                                id: id,
+                                codigo: codigo,
+                                nombre: usuario?.nombre || 'No encontrado'
+                            };
+                        });
+                    } catch (error) {
+                        // Si hay error, mantener solo IDs
+                        console.warn('Error buscando compañeros:', error);
+                        reservaObj.companeros = reservaObj.companeros.map((id: string) => ({
+                            id: id,
+                            codigo: 'Sin código',
+                            nombre: 'No encontrado'
+                        }));
+                    }
+                }
+
+                return reservaObj;
+            })
+        );
+
+        return reservasEnriquecidas;
     }
 
     // Verificar disponibilidad
     async checkDisponibilidad(
         aulasIds: string[],
-        equiposIds: string[],
+        equipos: { equipo: string; nombre: string; cantidad: number }[],
         fecha: Date,
         horaInicio: string,
         horaFin: string,
@@ -427,6 +636,8 @@ export class ReservasService {
             query._id = { $ne: excludeReservaId };
         }
 
+        const equiposIds = equipos.map((e: any) => e.equipo);
+
         // Buscar reservas que incluyan alguna de las aulas o equipos
         query.$or = [];
 
@@ -435,15 +646,55 @@ export class ReservasService {
         }
 
         if (equiposIds.length > 0) {
-            query.$or.push({ equipos: { $in: equiposIds } });
+            query.$or.push({ 'equipos.equipo': { $in: equiposIds } });
         }
 
         const reservasExistentes = await this.reservaModel.find(query).exec();
 
-        // Verificar si hay conflictos de horario
+        // Verificar conflictos de horario por aula (si hay alguna reserva que se solape)
         for (const reserva of reservasExistentes) {
             if (this.hayConflictoHorario(horaInicio, horaFin, reserva.horaInicio, reserva.horaFin)) {
-                return false;
+                // Si la reserva existente afecta a aulas solicitadas -> no disponible
+                if (aulasIds.length > 0 && reserva.aulas && reserva.aulas.some((a: any) => aulasIds.includes(a.toString()))) {
+                    return false;
+                }
+            }
+        }
+
+        // Verificar cantidades por equipo
+        if (equipos && equipos.length > 0) {
+            for (const req of equipos) {
+                // obtener el documento del equipo para conocer la cantidad total
+                const equipoDoc: any = await this.equipoModel.findById(req.equipo).exec();
+                if (!equipoDoc) {
+                    throw new HttpException(`Equipo ${req.equipo} no existe`, HttpStatus.NOT_FOUND);
+                }
+
+                // Buscar reservas en la misma fecha que referencien este equipo
+                const reservasConEquipo = await this.reservaModel.find({
+                    fecha: fecha,
+                    estado: { $in: ['pendiente', 'confirmada'] },
+                    'equipos.equipo': req.equipo,
+                }).exec();
+
+                let totalReservado = 0;
+
+                for (const r of reservasConEquipo) {
+                    const reserva: any = r;
+                    if (excludeReservaId && reserva._id.toString() === excludeReservaId) continue;
+                    if (this.hayConflictoHorario(horaInicio, horaFin, reserva.horaInicio, reserva.horaFin)) {
+                        if (reserva.equipos && reserva.equipos.length > 0) {
+                            const match = reserva.equipos.find((ec: any) => ec.equipo.toString() === req.equipo.toString());
+                            if (match) totalReservado += (match.cantidad || 1);
+                        }
+                    }
+                }
+
+                // cantidad disponible actual
+                const disponibleEquipo = (equipoDoc.quantity || 0) - totalReservado;
+                if (disponibleEquipo < req.cantidad) {
+                    return false;
+                }
             }
         }
 
@@ -567,8 +818,7 @@ export class ReservasService {
 
         const reservas = await this.reservaModel
             .find(query)
-            .populate('aulas')
-            .populate('equipos')
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
             .exec();
 
         let todasLasIncidencias: any[] = [];
@@ -703,10 +953,263 @@ export class ReservasService {
     async getReservasByEstado(
         estado: 'confirmada' | 'cancelada' | 'completada' | 'cerrada' | 'cerrada_con_incidencia',
     ): Promise<Reserva[]> {
-        return await this.reservaModel
+        const reservas = await this.reservaModel
             .find({ estado })
-            .populate('aulas')
-            .populate('equipos')
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
             .exec();
+
+        // Transformar la respuesta para aplanar la estructura de equipos
+        return reservas.map((reserva: any) => {
+            const reservaObj = reserva.toObject();
+            if (reservaObj.equipos && reservaObj.equipos.length > 0) {
+                reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
+                    equipo: eq.equipo?._id || eq.equipo,
+                    nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
+                    cantidad: eq.cantidad || 1,
+                    _id: eq._id
+                }));
+            }
+            return reservaObj;
+        });
     }
-}
+
+    // ===== DASHBOARD STATS - ENDPOINT OPTIMIZADO =====
+    
+    // Obtener estadísticas agregadas para el dashboard en una sola llamada
+    async getDashboardStats(): Promise<any> {
+        try {
+            const ahora = new Date();
+            const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
+            const finMes = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0);
+
+            // Obtener todas las reservas en paralelo
+            const [
+                todasReservas,
+                reservasMes,
+                incidenciasAbiertas,
+                aulasData,
+                equiposData
+            ] = await Promise.all([
+                this.reservaModel.find().populate('aulas', 'name').populate('equipos.equipo', 'name').exec(),
+                this.reservaModel.find({
+                    fecha: { $gte: inicioMes, $lte: finMes }
+                }).exec(),
+                this.reservaModel.find({
+                    'incidencias.0': { $exists: true },
+                    'incidencias.estado': { $in: ['reportada', 'en_revision', 'en_proceso'] }
+                }).exec(),
+                this.aulaModel.find().exec(),
+                this.equipoModel.find().exec()
+            ]);
+
+        // ===== ESTADÍSTICAS GENERALES =====
+        const totalReservas = todasReservas.length;
+        const reservasActivas = todasReservas.filter((r: any) => 
+            r.estado === 'confirmada' || r.estado === 'en_curso'
+        ).length;
+        const reservasCanceladas = todasReservas.filter((r: any) => r.estado === 'cancelada').length;
+        const reservasCerradas = todasReservas.filter((r: any) => 
+            r.estado === 'cerrada' || r.estado === 'cerrada_con_incidencia'
+        ).length;
+
+        // Contar incidencias abiertas
+        let totalIncidenciasAbiertas = 0;
+        incidenciasAbiertas.forEach((r: any) => {
+            if (r.incidencias && r.incidencias.length > 0) {
+                totalIncidenciasAbiertas += r.incidencias.filter((inc: any) => 
+                    ['reportada', 'en_revision', 'en_proceso'].includes(inc.estado)
+                ).length;
+            }
+        });
+
+        const stats = {
+            totalReservas,
+            reservasActivas,
+            reservasCanceladas,
+            reservasCerradas,
+            incidenciasAbiertas: totalIncidenciasAbiertas,
+            totalAulas: aulasData.length,
+            totalEquipos: equiposData.length
+        };
+
+        // ===== DATOS PARA GRÁFICAS (ÚLTIMOS 7 DÍAS) =====
+        const ultimosSieteDias: string[] = [];
+        const reservasPorDia: number[] = [];
+        
+        for (let i = 6; i >= 0; i--) {
+            const fecha = new Date();
+            fecha.setDate(fecha.getDate() - i);
+            fecha.setHours(0, 0, 0, 0);
+            
+            const fechaFin = new Date(fecha);
+            fechaFin.setHours(23, 59, 59, 999);
+            
+            const reservasDia = todasReservas.filter((r: any) => {
+                const fechaReserva = new Date(r.fecha);
+                return fechaReserva >= fecha && fechaReserva <= fechaFin;
+            }).length;
+            
+            const dias = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+            const label = `${dias[fecha.getDay()]} ${fecha.getDate()}`;
+            ultimosSieteDias.push(label);
+            reservasPorDia.push(reservasDia);
+        }
+
+        const chartData = {
+            labels: ultimosSieteDias,
+            data: reservasPorDia
+        };
+
+        // ===== RESERVAS POR MES (ÚLTIMOS 6 MESES) =====
+        const reservasPorMes: number[] = [];
+        const labelsMeses: string[] = [];
+        
+        for (let i = 5; i >= 0; i--) {
+            const fecha = new Date();
+            fecha.setMonth(fecha.getMonth() - i);
+            const mesInicio = new Date(fecha.getFullYear(), fecha.getMonth(), 1);
+            const mesFin = new Date(fecha.getFullYear(), fecha.getMonth() + 1, 0);
+            
+            const reservasMes = todasReservas.filter((r: any) => {
+                const fechaReserva = new Date(r.fecha);
+                return fechaReserva >= mesInicio && fechaReserva <= mesFin;
+            }).length;
+            
+            const meses = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+            labelsMeses.push(meses[mesInicio.getMonth()]);
+            reservasPorMes.push(reservasMes);
+        }
+
+        const monthlyChartData = {
+            labels: labelsMeses,
+            data: reservasPorMes
+        };
+
+        // ===== RANKING DE AULAS MÁS RESERVADAS =====
+        const aulasContador: any = {};
+        
+        todasReservas.forEach((r: any) => {
+            if (r.aulas && Array.isArray(r.aulas) && r.aulas.length > 0) {
+                r.aulas.forEach((aula: any) => {
+                    if (!aula) return;
+                    
+                    let aulaId: string;
+                    let aulaNombre: string;
+                    
+                    if (typeof aula === 'object' && aula._id) {
+                        aulaId = aula._id.toString();
+                        aulaNombre = aula.name || 'Sin nombre';
+                    } else if (typeof aula === 'string') {
+                        aulaId = aula;
+                        aulaNombre = 'Sin nombre';
+                    } else {
+                        return;
+                    }
+                    
+                    if (!aulasContador[aulaId]) {
+                        aulasContador[aulaId] = { nombre: aulaNombre, count: 0 };
+                    }
+                    aulasContador[aulaId].count++;
+                });
+            }
+        });
+
+        const aulasRanking = Object.entries(aulasContador)
+            .map(([id, data]: any) => ({ id, nombre: data.nombre, reservas: data.count }))
+            .sort((a, b) => b.reservas - a.reservas)
+            .slice(0, 5);
+
+        // ===== RANKING DE EQUIPOS MÁS RESERVADOS =====
+        const equiposContador: any = {};
+        
+        todasReservas.forEach((r: any) => {
+            if (r.equipos && Array.isArray(r.equipos) && r.equipos.length > 0) {
+                r.equipos.forEach((eq: any) => {
+                    if (!eq || !eq.equipo) return;
+                    
+                    let equipoId: string;
+                    let equipoNombre: string;
+                    
+                    if (typeof eq.equipo === 'object' && eq.equipo._id) {
+                        equipoId = eq.equipo._id.toString();
+                        equipoNombre = eq.equipo.name || eq.nombre || 'Sin nombre';
+                    } else if (typeof eq.equipo === 'string') {
+                        equipoId = eq.equipo;
+                        equipoNombre = eq.nombre || 'Sin nombre';
+                    } else {
+                        return;
+                    }
+                    
+                    const cantidad = eq.cantidad || 1;
+                    
+                    if (!equiposContador[equipoId]) {
+                        equiposContador[equipoId] = { nombre: equipoNombre, count: 0 };
+                    }
+                    equiposContador[equipoId].count += cantidad;
+                });
+            }
+        });
+
+        const equiposRanking = Object.entries(equiposContador)
+            .map(([id, data]: any) => ({ id, nombre: data.nombre, reservas: data.count }))
+            .sort((a, b) => b.reservas - a.reservas)
+            .slice(0, 5);
+
+        // ===== DISTRIBUCIÓN POR TIPO =====
+        const reservasPorTipo = {
+            aula: todasReservas.filter((r: any) => r.tipo === 'aula').length,
+            equipo: todasReservas.filter((r: any) => r.tipo === 'equipo').length
+        };
+
+        // ===== DISTRIBUCIÓN POR ESTADO =====
+        const reservasPorEstado = {
+            confirmada: todasReservas.filter((r: any) => r.estado === 'confirmada').length,
+            cancelada: reservasCanceladas,
+            cerrada: reservasCerradas,
+            en_curso: todasReservas.filter((r: any) => r.estado === 'en_curso').length,
+            cerrada_con_incidencia: todasReservas.filter((r: any) => r.estado === 'cerrada_con_incidencia').length
+        };
+
+        // ===== PRÓXIMAS RESERVAS (SIGUIENTE SEMANA) =====
+        const proximaSemana = new Date();
+        proximaSemana.setDate(proximaSemana.getDate() + 7);
+        
+        const proximasReservas = todasReservas
+            .filter((r: any) => {
+                const fechaReserva = new Date(r.fecha);
+                return fechaReserva >= ahora && fechaReserva <= proximaSemana && 
+                       (r.estado === 'confirmada' || r.estado === 'en_curso');
+            })
+            .sort((a: any, b: any) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime())
+            .slice(0, 5)
+            .map((r: any) => ({
+                id: r._id,
+                nombre: r.nombre,
+                fecha: r.fecha,
+                horaInicio: r.horaInicio,
+                horaFin: r.horaFin,
+                tipo: r.tipo,
+                estado: r.estado,
+                aulas: r.aulas?.map((a: any) => a.name || 'Sin nombre') || []
+            }));
+
+        return {
+            stats,
+            chartData,
+            monthlyChartData,
+            aulasRanking,
+            equiposRanking,
+            reservasPorTipo,
+            reservasPorEstado,
+            proximasReservas
+        };
+        } catch (error) {
+            console.error('Error en getDashboardStats:', error);
+            throw new HttpException(
+                `Error al obtener estadísticas del dashboard: ${error.message}`,
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+} 

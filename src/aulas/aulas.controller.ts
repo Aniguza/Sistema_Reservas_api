@@ -1,14 +1,20 @@
-import { Controller, Get, Post, Put, Delete, Res, HttpStatus, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Res, HttpStatus, Body, Param, Query, UseGuards } from '@nestjs/common';
 
 import { CreateAulasDTO } from './dto/aulas.dto';
 import { AulasService } from './aulas.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 
 @Controller('aulas')
 export class AulasController {
 
     constructor(private readonly aulasService: AulasService) { }
 
+    // Crear aula (SOLO ADMIN)
     @Post('/create')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
     async createAulas(@Res() res, @Body() createAulasDTO: CreateAulasDTO) {
         try {
             const nuevaAula = await this.aulasService.createAula(createAulasDTO);
@@ -24,6 +30,7 @@ export class AulasController {
         }
     }
 
+    // Obtener todas las aulas (PÚBLICO)
     @Get('/')
     async getAllAulas(@Res() res) {
         try {
@@ -52,7 +59,9 @@ export class AulasController {
         }
     }
 
+    // Obtener aula por ID (USUARIOS AUTENTICADOS)
     @Get('/:id')
+    @UseGuards(JwtAuthGuard)
     async getAulaById(@Res() res, @Param('id') id: string) {
         try {
             const aula = await this.aulasService.getAulaById(id);
@@ -66,7 +75,10 @@ export class AulasController {
     }
 
 
+    // Actualizar aula (SOLO ADMIN)
     @Put('/update/:id')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
     async updateAula(@Res() res, @Param('id') id: string, @Body() createAulasDTO: CreateAulasDTO) {
         try {
             const updatedAula = await this.aulasService.updateAula(id, createAulasDTO);
@@ -82,7 +94,10 @@ export class AulasController {
         }
     }
 
+    // Eliminar aula (SOLO ADMIN)
     @Delete('/delete/:id')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
     async deleteAula(@Res() res, @Param('id') id: string) {
         try {
             const deletedAula = await this.aulasService.deleteAula(id);
@@ -100,6 +115,7 @@ export class AulasController {
 
     // Nuevo endpoint: Obtener fechas reservadas de un aula específica
     @Get('/:id/fechas-reservadas')
+    @UseGuards(JwtAuthGuard)
     async getFechasReservadas(@Res() res, @Param('id') id: string) {
         try {
             const fechasReservadas = await this.aulasService.getFechasReservadas(id);
@@ -117,6 +133,7 @@ export class AulasController {
 
     // Nuevo endpoint: Verificar disponibilidad de un aula en fecha/hora específica
     @Get('/:id/verificar-disponibilidad')
+    @UseGuards(JwtAuthGuard)
     async verificarDisponibilidad(
         @Res() res, 
         @Param('id') id: string,

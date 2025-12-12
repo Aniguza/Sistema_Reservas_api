@@ -12,19 +12,32 @@ export interface Incidencia {
     _id?: string;
 }
 
+export interface Reprogramacion {
+    fechaReprogramacion: Date;
+    fechaAnterior: Date;
+    fechaNueva: Date;
+    horaInicioAnterior: string;
+    horaInicioNueva: string;
+    horaFinAnterior: string;
+    horaFinNueva: string;
+    motivo?: string;
+    _id?: string;
+}
+
 export interface Reserva extends Document {
     nombre: string;
     correo: string;
     companeros?: string[]; // Array de códigos universitarios
     tipo: 'aula' | 'equipo';
     aulas?: string[]; // Array de IDs de aulas
-    equipos?: string[]; // Array de IDs de equipos
+    equipos?: { equipo: string; nombre: string; cantidad: number }[]; // Array de equipos con nombre y cantidad
     fecha: Date;
     horaInicio: string;
     horaFin: string;
     motivo: string;
-    estado: 'pendiente' | 'confirmada' | 'en_curso' | 'cancelada' |  'cerrada' | 'cerrada_con_incidencia';
+    estado: 'pendiente' | 'confirmada' | 'reprogramada' | 'en_curso' | 'cancelada' |  'cerrada' | 'cerrada_con_incidencia';
     incidencias?: Incidencia[];
+    reprogramaciones?: Reprogramacion[];
     createdAt?: Date;
     updatedAt?: Date;
 }

@@ -1,16 +1,21 @@
 import {
-    Controller, Get, Post, Put, Delete, Res, HttpStatus, Body, Param
+    Controller, Get, Post, Put, Delete, Res, HttpStatus, Body, Param, UseGuards
 } from '@nestjs/common';
 import { UsuariosService } from './usuarios.service';
 import { CreateUsuarioDto } from './dto/create-usuario.dto';
 import { UpdateUsuarioDto } from './dto/update-usuario.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 
 @Controller('usuarios')
 export class UsuariosController {
     constructor(private readonly usuariosService: UsuariosService) { }
 
-    // Crear usuario (registro público)
+    // Crear usuario (SOLO ADMIN)
     @Post('/create')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
     async createUsuario(@Res() response, @Body() createUsuarioDto: CreateUsuarioDto) {
         try {
             const usuario = await this.usuariosService.createUsuario(createUsuarioDto);
@@ -26,10 +31,10 @@ export class UsuariosController {
         }
     }
 
-    // Obtener todos los usuarios
-    // Nota: Docentes y alumnos pueden ver usuarios para agregarlos en reservas
-    // Solo admin puede crear/editar/eliminar usuarios
+    // Obtener todos los usuarios (TODOS los roles autenticados)
+    // Docentes y alumnos lo necesitan para agregar compañeros en reservas
     @Get('/')
+    @UseGuards(JwtAuthGuard)
     async getAllUsuarios(@Res() response) {
         try {
             const usuarios = await this.usuariosService.getAllUsuarios();
@@ -42,8 +47,9 @@ export class UsuariosController {
         }
     }
 
-    // Obtener usuario por ID
+    // Obtener usuario por ID (TODOS los roles autenticados)
     @Get('/:id')
+    @UseGuards(JwtAuthGuard)
     async getUsuarioById(@Res() response, @Param('id') id: string) {
         try {
             const usuario = await this.usuariosService.getUsuarioById(id);
@@ -56,8 +62,25 @@ export class UsuariosController {
         }
     }
 
-    // Actualizar usuario
+    // Obtener perfil de usuario por correo (TODOS los roles autenticados)
+    @Get('/perfil/:correo')
+    @UseGuards(JwtAuthGuard)
+    async getPerfilByCorreo(@Res() response, @Param('correo') correo: string) {
+        try {
+            const perfil = await this.usuariosService.getPerfilByCorreo(correo);
+            return response.status(HttpStatus.OK).json(perfil);
+        } catch (error) {
+            return response.status(HttpStatus.BAD_REQUEST).json({
+                message: 'Error al obtener el perfil',
+                error: error.message,
+            });
+        }
+    }
+
+    // Actualizar usuario (SOLO ADMIN)
     @Put('update/:id')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
     async update(@Res() response, @Param('id') id: string, @Body() updateUsuarioDto: UpdateUsuarioDto) {
         try {
             const usuario = await this.usuariosService.updateUsuario(id, updateUsuarioDto);
@@ -70,8 +93,10 @@ export class UsuariosController {
         }
     }
 
-    // Eliminar usuario
+    // Eliminar usuario (SOLO ADMIN)
     @Delete('/delete/:id')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
     async remove(@Res() response, @Param('id') id: string) {
         try {
             const usuario = await this.usuariosService.remove(id);
