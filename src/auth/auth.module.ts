@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { JwtModule, JwtModuleOptions, JwtSignOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
@@ -9,11 +10,22 @@ import { LocalStrategy } from './strategies/local.strategy';
 
 @Module({
     imports: [
+        ConfigModule,
         UsuariosModule,
         PassportModule,
-        JwtModule.register({
-            secret: 'SECRET_KEY_CHANGE_THIS', // TODO: Mover a variables de entorno
-            signOptions: { expiresIn: '24h' },
+        JwtModule.registerAsync({
+            inject: [ConfigService],
+            useFactory: async (configService: ConfigService): Promise<JwtModuleOptions> => {
+                const secret = configService.getOrThrow<string>('JWT_SECRET');
+                const expiresIn = configService.get<string>('JWT_EXPIRES_IN');
+
+                return {
+                    secret,
+                    signOptions: {
+                        expiresIn: (expiresIn ?? '24h') as JwtSignOptions['expiresIn'],
+                    },
+                };
+            },
         }),
     ],
     controllers: [AuthController],
