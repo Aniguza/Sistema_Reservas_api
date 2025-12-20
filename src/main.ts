@@ -8,9 +8,15 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.useGlobalPipes(new ValidationPipe());
 
+  // Configurar CORS DEV
   app.enableCors({ 
-    origin: ['https://utpreservas.netlify.app', 'https://utpreservasadmin.netlify.app'] 
+    origin: ['http://localhost:5174', 'http://localhost:5173'] 
   });
+
+  // Configurar cors PROD
+  // app.enableCors({ 
+  //   origin: ['https://utpreservas.netlify.app', 'https://utpreservasadmin.netlify.app'] 
+  // });
   await app.listen(process.env.PORT ?? 3000);
 
   // console.log('🚀 Servidor iniciado en http://localhost:3000');

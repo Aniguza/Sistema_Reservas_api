@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { MailModule } from '../mail/mail.module';
 import { ReservasController } from './reservas.controller';
 import { ReservasService } from './reservas.service';
 import { reservasSchema } from './schemas/reservas.schema';
@@ -13,6 +14,7 @@ import { equiposSchema } from '../equipos/schemas/equipos.schema';
             { name: 'Aula', schema: aulasSchema },
             { name: 'Equipo', schema: equiposSchema },
         ]),
+        MailModule,
     ],
     controllers: [ReservasController],
     providers: [ReservasService],

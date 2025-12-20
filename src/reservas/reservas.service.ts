@@ -1,18 +1,22 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Reserva } from './interfaces/reservas.interface';
 import { Aula } from '../aulas/interfaces/aulas.interface';
 import { Equipo } from '../equipos/interfaces/equipos.interface';
+import { MailService } from '../mail/mail.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
 
 @Injectable()
 export class ReservasService {
+    private readonly logger = new Logger(ReservasService.name);
+
     constructor(
         @InjectModel('Reserva') private readonly reservaModel: Model<Reserva>,
         @InjectModel('Aula') private readonly aulaModel: Model<Aula>,
         @InjectModel('Equipo') private readonly equipoModel: Model<Equipo>,
+        private readonly mailService: MailService,
     ) { }
 
     // Crear nueva reserva
@@ -301,6 +305,27 @@ export class ReservasService {
                 cantidad: eq.cantidad || 1,
                 _id: eq._id
             }));
+        }
+
+        const fechaLegible = new Date(reservaObj.fecha).toLocaleDateString('es-PE', { dateStyle: 'full' });
+        const aulaReservada = Array.isArray(reservaObj.aulas) ? reservaObj.aulas[0] : undefined;
+        const aulaNombre = aulaReservada?.name || aulaReservada?.codigo;
+        const ambienteDescripcion =
+            reservaObj.tipo === 'equipo'
+                ? aulaNombre ? `Equipos en ${aulaNombre}` : 'Reserva de equipos'
+                : aulaNombre || 'Ambiente reservado';
+
+        try {
+            await this.mailService.sendReservaEmail(
+                reservaObj.correo,
+                reservaObj.nombre,
+                fechaLegible,
+                ambienteDescripcion,
+                { inicio: reservaObj.horaInicio, fin: reservaObj.horaFin },
+                reservaObj.equipos,
+            );
+        } catch (mailError) {
+            this.logger.error(`No se pudo enviar correo de reserva ${reservaObj._id}`, mailError as Error);
         }
 
         return reservaObj;
