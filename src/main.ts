@@ -9,16 +9,16 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe());
 
   app.enableCors({ 
-    origin: ['http://localhost:5173', 'http://localhost:5174'] 
+    origin: ['https://utpreservas.netlify.app/', 'https://utpreservasadmin.netlify.app/'] 
   });
   await app.listen(process.env.PORT ?? 3000);
 
-  console.log('🚀 Servidor iniciado en http://localhost:3000');
-  console.log('📋 Endpoints disponibles:');
-  console.log('  - POST /usuarios - Crear usuario');
-  console.log('  - GET /usuarios - Listar usuarios');
-  console.log('  - POST /auth/login - Login usuarios');
-  console.log('  - POST /auth/admin/login - Login administrador');
-  console.log('  - GET /auth/profile - Perfil (requiere token)');
+  // console.log('🚀 Servidor iniciado en http://localhost:3000');
+  // console.log('📋 Endpoints disponibles:');
+  // console.log('  - POST /usuarios - Crear usuario');
+  // console.log('  - GET /usuarios - Listar usuarios');
+  // console.log('  - POST /auth/login - Login usuarios');
+  // console.log('  - POST /auth/admin/login - Login administrador');
+  // console.log('  - GET /auth/profile - Perfil (requiere token)');
 }
 bootstrap();
