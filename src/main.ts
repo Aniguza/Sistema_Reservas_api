@@ -9,7 +9,7 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe());
 
   app.enableCors({ 
-    origin: ['https://utpreservas.netlify.app/', 'https://utpreservasadmin.netlify.app/'] 
+    origin: ['https://utpreservas.netlify.app', 'https://utpreservasadmin.netlify.app'] 
   });
   await app.listen(process.env.PORT ?? 3000);
 
