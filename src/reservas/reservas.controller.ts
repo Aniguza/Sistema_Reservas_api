@@ -108,10 +108,10 @@ export class ReservasController {
         }
     }
 
-    // Reprogramar reserva (ALUMNOS Y DOCENTES)
+    // Reprogramar reserva (ALUMNOS, DOCENTES Y ADMIN)
     @Patch('/reprogramar/:id')
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles('alumno', 'docente')
+    @Roles('administrador')
     async reprogramarReserva(
         @Res() res,
         @Param('id') id: string,

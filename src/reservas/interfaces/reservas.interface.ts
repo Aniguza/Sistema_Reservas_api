@@ -35,6 +35,7 @@ export interface Reserva extends Document {
     horaInicio: string;
     horaFin: string;
     motivo: string;
+    codigo: string;
     estado: 'pendiente' | 'confirmada' | 'reprogramada' | 'en_curso' | 'cancelada' |  'cerrada' | 'cerrada_con_incidencia';
     incidencias?: Incidencia[];
     reprogramaciones?: Reprogramacion[];

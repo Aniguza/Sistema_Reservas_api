@@ -3,6 +3,7 @@ import { Schema } from 'mongoose';
 export const reservasSchema = new Schema({
   nombre: { type: String, required: true },
   correo: { type: String, required: true },
+  codigo: { type: String, required: true, unique: false },
   companeros: [{ type: String, required: false }], // Array de códigos universitarios
   tipo: { type: String, enum: ['aula', 'equipo'], required: true },
   aulas: [{ type: Schema.Types.ObjectId, ref: 'Aula', required: false }], // Array de aulas

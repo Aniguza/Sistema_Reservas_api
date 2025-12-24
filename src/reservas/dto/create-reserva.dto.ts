@@ -1,6 +1,7 @@
 export class CreateReservaDto {
     readonly nombre: string;
     readonly correo: string;
+    readonly codigo?: string;
     readonly companeros?: string[]; // Códigos universitarios de compañeros
     readonly tipo: 'aula' | 'equipo';
     readonly aula?: string; // ID del aula (solo si tipo es 'aula')

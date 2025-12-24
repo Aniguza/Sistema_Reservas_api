@@ -12,12 +12,106 @@ import { UpdateReservaDto } from './dto/update-reserva.dto';
 export class ReservasService {
     private readonly logger = new Logger(ReservasService.name);
 
+    private generarCodigoReserva(nombre: string, fecha: Date): string {
+        const initials = this.obtenerIniciales(nombre);
+        const year = fecha.getFullYear();
+        const month = String(fecha.getMonth() + 1).padStart(2, '0');
+        const day = String(fecha.getDate()).padStart(2, '0');
+        return `RES-${initials}-${year}${month}${day}`;
+    }
+
+    private obtenerIniciales(nombre: string): string {
+        if (!nombre) {
+            return 'SININI';
+        }
+
+        const initials = nombre
+            .split(/\s+/)
+            .filter(Boolean)
+            .map((parte) => this.quitarAcentos(parte.charAt(0)).toUpperCase())
+            .join('');
+
+        return initials || 'SININI';
+    }
+
+    private quitarAcentos(texto: string): string {
+        return texto ? texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').normalize('NFC') : '';
+    }
+
+    private obtenerCodigoDesdeCorreo(correo: string): string {
+        if (!correo) {
+            return 'SIN-CODIGO';
+        }
+
+        return correo.split('@')[0]?.toUpperCase() || 'SIN-CODIGO';
+    }
+
     constructor(
         @InjectModel('Reserva') private readonly reservaModel: Model<Reserva>,
         @InjectModel('Aula') private readonly aulaModel: Model<Aula>,
         @InjectModel('Equipo') private readonly equipoModel: Model<Equipo>,
         private readonly mailService: MailService,
     ) { }
+
+    private async construirContextoReserva(reservaId: string) {
+        const reserva = await this.reservaModel
+            .findById(reservaId)
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .exec();
+
+        if (!reserva) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        const reservaObj: any = reserva.toObject();
+
+        if (reservaObj.equipos && reservaObj.equipos.length > 0) {
+            reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
+                equipo: eq.equipo?._id || eq.equipo,
+                nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
+                cantidad: eq.cantidad || 1,
+                _id: eq._id,
+            }));
+        }
+
+        const fechaLegible = new Date(reservaObj.fecha).toLocaleDateString('es-PE', { dateStyle: 'full' });
+        const aulaReservada = Array.isArray(reservaObj.aulas) ? reservaObj.aulas[0] : undefined;
+        const aulaNombre = aulaReservada?.name || aulaReservada?.codigo;
+        const ambienteDescripcion =
+            reservaObj.tipo === 'equipo'
+                ? aulaNombre ? `Equipos en ${aulaNombre}` : 'Reserva de equipos'
+                : aulaNombre || 'Ambiente reservado';
+
+        let codigoReserva = reservaObj.codigo;
+        if (!codigoReserva) {
+            codigoReserva = this.generarCodigoReserva(reservaObj.nombre, new Date(reservaObj.fecha));
+            try {
+                await this.reservaModel.findByIdAndUpdate(reservaObj._id, { codigo: codigoReserva }).exec();
+                reservaObj.codigo = codigoReserva;
+            } catch (legacyError) {
+                this.logger.warn(`No se pudo actualizar código de reserva legacy ${reservaObj._id}`, legacyError as Error);
+            }
+        }
+
+        const codigoAlumno = this.obtenerCodigoDesdeCorreo(reservaObj.correo);
+
+        return {
+            reservaObj,
+            fechaLegible,
+            ambienteDescripcion,
+            codigoReserva,
+            codigoAlumno,
+        };
+    }
+
+    private asegurarCodigoReserva(reserva: any): string {
+        if (!reserva.codigo) {
+            reserva.codigo = this.generarCodigoReserva(reserva.nombre, new Date(reserva.fecha));
+        }
+
+        return reserva.codigo;
+    }
 
     // Crear nueva reserva
     async createReserva(createReservaDto: CreateReservaDto): Promise<Reserva> {
@@ -30,14 +124,14 @@ export class ReservasService {
         hoy.setHours(0, 0, 0, 0);
         fechaReserva.setHours(0, 0, 0, 0);
 
-        /* const diferenciaDias = Math.ceil((fechaReserva.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
+        const diferenciaDias = Math.ceil((fechaReserva.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
 
         if (diferenciaDias < 2) {
             throw new HttpException(
                 'Las reservas deben realizarse con al menos 2 días de anticipación',
                 HttpStatus.BAD_REQUEST,
             );
-        } */
+        } 
 
         let aulasIds: string[] = [];
 
@@ -237,6 +331,8 @@ export class ReservasService {
             );
         }
 
+        const codigoReserva = this.generarCodigoReserva(createReservaDto.nombre, fechaNormalizada);
+
         // Crear la reserva
         const nuevaReserva = new this.reservaModel({
             ...createReservaDto,
@@ -244,6 +340,7 @@ export class ReservasService {
             aulas: aulasIds,
             equipos: tipo === 'equipo' ? equiposConNombres : [],
             estado: estadoInicial,
+            codigo: codigoReserva,
         });
 
         const saved = await nuevaReserva.save();
@@ -286,47 +383,42 @@ export class ReservasService {
         }
 
         // Retornar la reserva guardada con las aulas pobladas
-        const reservaFinal = await this.reservaModel
-            .findById(saved._id)
-            .populate('aulas', 'name codigo description imageUrl disponibilidad')
-            .populate('equipos.equipo', 'name')
-            .exec();
-        
-        if (!reservaFinal) {
-            throw new HttpException('Error al recuperar la reserva creada', HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-
-        // Transformar la respuesta para aplanar la estructura de equipos
-        const reservaObj: any = reservaFinal.toObject();
-        if (reservaObj.equipos && reservaObj.equipos.length > 0) {
-            reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
-                equipo: eq.equipo?._id || eq.equipo,
-                nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
-                cantidad: eq.cantidad || 1,
-                _id: eq._id
-            }));
-        }
-
-        const fechaLegible = new Date(reservaObj.fecha).toLocaleDateString('es-PE', { dateStyle: 'full' });
-        const aulaReservada = Array.isArray(reservaObj.aulas) ? reservaObj.aulas[0] : undefined;
-        const aulaNombre = aulaReservada?.name || aulaReservada?.codigo;
-        const ambienteDescripcion =
-            reservaObj.tipo === 'equipo'
-                ? aulaNombre ? `Equipos en ${aulaNombre}` : 'Reserva de equipos'
-                : aulaNombre || 'Ambiente reservado';
+        const {
+            reservaObj,
+            fechaLegible,
+            ambienteDescripcion,
+            codigoReserva: codigoReservaFinal,
+            codigoAlumno,
+        } = await this.construirContextoReserva(saved.id);
 
         try {
-            await this.mailService.sendReservaEmail(
-                reservaObj.correo,
-                reservaObj.nombre,
-                fechaLegible,
-                ambienteDescripcion,
-                { inicio: reservaObj.horaInicio, fin: reservaObj.horaFin },
-                reservaObj.equipos,
-            );
+            await this.mailService.sendReservaEmail({
+                email: reservaObj.correo,
+                nombre: reservaObj.nombre,
+                fecha: fechaLegible,
+                ambiente: ambienteDescripcion,
+                horario: { inicio: reservaObj.horaInicio, fin: reservaObj.horaFin },
+                equipos: reservaObj.equipos,
+                codigoReserva: codigoReservaFinal,
+                codigoAlumno,
+            });
         } catch (mailError) {
             this.logger.error(`No se pudo enviar correo de reserva ${reservaObj._id}`, mailError as Error);
         }
+
+        await this.mailService.notifyReservaAdmin({
+            reservaId: String(reservaObj._id),
+            usuario: reservaObj.nombre,
+            correoUsuario: reservaObj.correo,
+            fecha: fechaLegible,
+            ambiente: ambienteDescripcion,
+            horario: { inicio: reservaObj.horaInicio, fin: reservaObj.horaFin },
+            tipo: reservaObj.tipo,
+            motivo: reservaObj.motivo,
+            equipos: reservaObj.equipos,
+            codigoReserva: codigoReservaFinal,
+            codigoAlumno,
+        });
 
         return reservaObj;
     }
@@ -412,6 +504,8 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
+        this.asegurarCodigoReserva(reserva);
+
         if (reserva.estado === 'cancelada') {
             throw new HttpException(
                 'No se puede reprogramar una reserva cancelada',
@@ -456,6 +550,12 @@ export class ReservasService {
             reserva.reprogramaciones = [];
         }
 
+        const fechaAnterior = new Date(reserva.fecha);
+        const horarioAnterior = {
+            inicio: reserva.horaInicio,
+            fin: reserva.horaFin,
+        };
+
         reserva.reprogramaciones.push({
             fechaReprogramacion: new Date(),
             fechaAnterior: reserva.fecha,
@@ -474,7 +574,29 @@ export class ReservasService {
         reserva.estado = 'reprogramada';
         reserva.updatedAt = new Date();
 
-        return await reserva.save();
+        const reservaActualizada = await reserva.save();
+
+        const contexto = await this.construirContextoReserva(reservaActualizada.id);
+
+        try {
+            await this.mailService.sendReprogramacionEmail({
+                email: contexto.reservaObj.correo,
+                nombre: contexto.reservaObj.nombre,
+                codigoReserva: contexto.codigoReserva,
+                codigoAlumno: contexto.codigoAlumno,
+                fechaAnterior: fechaAnterior.toLocaleDateString('es-PE', { dateStyle: 'full' }),
+                fechaNueva: contexto.fechaLegible,
+                horarioAnterior,
+                horarioNuevo: { inicio: contexto.reservaObj.horaInicio, fin: contexto.reservaObj.horaFin },
+                ambiente: contexto.ambienteDescripcion,
+                motivo: motivo || 'Sin motivo especificado',
+                equipos: contexto.reservaObj.equipos,
+            });
+        } catch (mailError) {
+            this.logger.error(`No se pudo notificar reprogramación ${reservaActualizada._id}`, mailError as Error);
+        }
+
+        return reservaActualizada;
     }
 
     // Cancelar reserva (solo admin o el mismo usuario)
@@ -489,6 +611,8 @@ export class ReservasService {
         if (!reserva) {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
+
+        this.asegurarCodigoReserva(reserva);
 
         // Permitir cancelación si es admin O si es el mismo usuario
         if (!isAdmin && (!correoUsuario || correoUsuario !== reserva.correo)) {
@@ -522,7 +646,27 @@ export class ReservasService {
         }
         reserva.updatedAt = new Date();
 
-        return await reserva.save();
+        const reservaCancelada = await reserva.save();
+
+        const contexto = await this.construirContextoReserva(reservaCancelada.id);
+        const motivoCorreo = motivoCancelacion || 'Sin motivo proporcionado';
+
+        try {
+            await this.mailService.sendCancelacionEmail({
+                email: contexto.reservaObj.correo,
+                nombre: contexto.reservaObj.nombre,
+                codigoReserva: contexto.codigoReserva,
+                codigoAlumno: contexto.codigoAlumno,
+                fecha: contexto.fechaLegible,
+                horario: { inicio: contexto.reservaObj.horaInicio, fin: contexto.reservaObj.horaFin },
+                ambiente: contexto.ambienteDescripcion,
+                motivoCancelacion: motivoCorreo,
+            });
+        } catch (mailError) {
+            this.logger.error(`No se pudo notificar cancelación ${reservaCancelada._id}`, mailError as Error);
+        }
+
+        return reservaCancelada;
     }
 
     // Eliminar reserva
@@ -764,6 +908,8 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
+        this.asegurarCodigoReserva(reserva);
+
         const nuevaIncidencia = {
             descripcion,
             tipo,
@@ -781,7 +927,41 @@ export class ReservasService {
         reserva.incidencias.push(nuevaIncidencia);
         reserva.updatedAt = new Date();
 
-        return await reserva.save();
+        const reservaConIncidencia = await reserva.save();
+
+        const contexto = await this.construirContextoReserva(reservaConIncidencia.id);
+        const incidenciaRegistrada: any = reservaConIncidencia.incidencias
+            ? reservaConIncidencia.incidencias[reservaConIncidencia.incidencias.length - 1]
+            : null;
+
+        if (incidenciaRegistrada) {
+            try {
+                await this.mailService.sendIncidenciaEmail({
+                    email: contexto.reservaObj.correo,
+                    nombre: contexto.reservaObj.nombre,
+                    codigoReserva: contexto.codigoReserva,
+                    codigoAlumno: contexto.codigoAlumno,
+                    fechaReserva: contexto.fechaLegible,
+                    ambiente: contexto.ambienteDescripcion,
+                    incidencia: {
+                        id: incidenciaRegistrada._id?.toString() || 'SIN-ID',
+                        descripcion: incidenciaRegistrada.descripcion,
+                        tipo: incidenciaRegistrada.tipo,
+                        prioridad: incidenciaRegistrada.prioridad,
+                        estado: incidenciaRegistrada.estado,
+                        fechaReporte: new Date(incidenciaRegistrada.reportadoEn || Date.now()).toLocaleString('es-PE', {
+                            dateStyle: 'full',
+                            timeStyle: 'short',
+                        }),
+                        reportadoPor: incidenciaRegistrada.reportadoPor,
+                    },
+                });
+            } catch (mailError) {
+                this.logger.error(`No se pudo notificar incidencia ${reservaConIncidencia._id}`, mailError as Error);
+            }
+        }
+
+        return reservaConIncidencia;
     }
 
     // Actualizar estado de incidencia
@@ -796,6 +976,8 @@ export class ReservasService {
         if (!reserva) {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
+
+        this.asegurarCodigoReserva(reserva);
 
         if (!reserva.incidencias || reserva.incidencias.length === 0) {
             throw new HttpException(
@@ -896,6 +1078,8 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
+        this.asegurarCodigoReserva(reserva);
+
         if (!reserva.incidencias || reserva.incidencias.length === 0) {
             throw new HttpException(
                 'No hay incidencias en esta reserva',
@@ -956,6 +1140,7 @@ export class ReservasService {
                 }
 
                 reserva.updatedAt = new Date();
+                this.asegurarCodigoReserva(reserva);
                 await reserva.save();
                 actualizadas++;
 
