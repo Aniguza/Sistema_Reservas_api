@@ -57,6 +57,43 @@ export class ReservasController {
         }
     }
 
+    // Exportar reservas a Excel (SOLO ADMIN)
+    @Get('/reportes/excel')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
+    async exportReservasExcel(
+        @Res() res,
+        @Query('fechaInicio') fechaInicio?: string,
+        @Query('fechaFin') fechaFin?: string,
+        @Query('periodo') periodo?: 'dia' | 'semana' | 'mes' | 'trimestre' | 'semestre' | 'anio',
+        @Query('fechaReferencia') fechaReferencia?: string,
+        @Query('tipo') tipo?: 'aula' | 'equipo',
+    ) {
+        try {
+            const { buffer, fileName, total } = await this.reservasService.exportReservasToExcel({
+                fechaInicio,
+                fechaFin,
+                periodo,
+                fechaReferencia,
+                tipo,
+            });
+
+            const encodedName = encodeURIComponent(fileName);
+
+            res.set({
+                'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'Content-Disposition': `attachment; filename="${fileName}"; filename*=UTF-8''${encodedName}`,
+                'X-Total-Items': total.toString(),
+            });
+
+            return res.status(HttpStatus.OK).send(buffer);
+        } catch (error) {
+            return res.status(error.status || HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
     // Obtener todas las reservas (SOLO ADMIN)
     @Get('/')
     @UseGuards(JwtAuthGuard, RolesGuard)
@@ -108,10 +145,10 @@ export class ReservasController {
         }
     }
 
-    // Reprogramar reserva (ALUMNOS Y DOCENTES)
+    // Reprogramar reserva (ALUMNOS, DOCENTES Y ADMIN)
     @Patch('/reprogramar/:id')
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles('alumno', 'docente')
+    @Roles('administrador')
     async reprogramarReserva(
         @Res() res,
         @Param('id') id: string,

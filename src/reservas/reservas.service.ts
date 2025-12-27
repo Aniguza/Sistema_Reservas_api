@@ -7,10 +7,45 @@ import { Equipo } from '../equipos/interfaces/equipos.interface';
 import { MailService } from '../mail/mail.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
+import { Workbook } from 'exceljs';
 
 @Injectable()
 export class ReservasService {
     private readonly logger = new Logger(ReservasService.name);
+
+    private generarCodigoReserva(nombre: string, fecha: Date): string {
+        const initials = this.obtenerIniciales(nombre);
+        const year = fecha.getFullYear();
+        const month = String(fecha.getMonth() + 1).padStart(2, '0');
+        const day = String(fecha.getDate()).padStart(2, '0');
+        return `RES-${initials}-${year}${month}${day}`;
+    }
+
+    private obtenerIniciales(nombre: string): string {
+        if (!nombre) {
+            return 'SININI';
+        }
+
+        const initials = nombre
+            .split(/\s+/)
+            .filter(Boolean)
+            .map((parte) => this.quitarAcentos(parte.charAt(0)).toUpperCase())
+            .join('');
+
+        return initials || 'SININI';
+    }
+
+    private quitarAcentos(texto: string): string {
+        return texto ? texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').normalize('NFC') : '';
+    }
+
+    private obtenerCodigoDesdeCorreo(correo: string): string {
+        if (!correo) {
+            return 'SIN-CODIGO';
+        }
+
+        return correo.split('@')[0]?.toUpperCase() || 'SIN-CODIGO';
+    }
 
     constructor(
         @InjectModel('Reserva') private readonly reservaModel: Model<Reserva>,
@@ -18,6 +53,66 @@ export class ReservasService {
         @InjectModel('Equipo') private readonly equipoModel: Model<Equipo>,
         private readonly mailService: MailService,
     ) { }
+
+    private async construirContextoReserva(reservaId: string) {
+        const reserva = await this.reservaModel
+            .findById(reservaId)
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .exec();
+
+        if (!reserva) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        const reservaObj: any = reserva.toObject();
+
+        if (reservaObj.equipos && reservaObj.equipos.length > 0) {
+            reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
+                equipo: eq.equipo?._id || eq.equipo,
+                nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
+                cantidad: eq.cantidad || 1,
+                _id: eq._id,
+            }));
+        }
+
+        const fechaLegible = new Date(reservaObj.fecha).toLocaleDateString('es-PE', { dateStyle: 'full' });
+        const aulaReservada = Array.isArray(reservaObj.aulas) ? reservaObj.aulas[0] : undefined;
+        const aulaNombre = aulaReservada?.name || aulaReservada?.codigo;
+        const ambienteDescripcion =
+            reservaObj.tipo === 'equipo'
+                ? aulaNombre ? `Equipos en ${aulaNombre}` : 'Reserva de equipos'
+                : aulaNombre || 'Ambiente reservado';
+
+        let codigoReserva = reservaObj.codigo;
+        if (!codigoReserva) {
+            codigoReserva = this.generarCodigoReserva(reservaObj.nombre, new Date(reservaObj.fecha));
+            try {
+                await this.reservaModel.findByIdAndUpdate(reservaObj._id, { codigo: codigoReserva }).exec();
+                reservaObj.codigo = codigoReserva;
+            } catch (legacyError) {
+                this.logger.warn(`No se pudo actualizar código de reserva legacy ${reservaObj._id}`, legacyError as Error);
+            }
+        }
+
+        const codigoAlumno = this.obtenerCodigoDesdeCorreo(reservaObj.correo);
+
+        return {
+            reservaObj,
+            fechaLegible,
+            ambienteDescripcion,
+            codigoReserva,
+            codigoAlumno,
+        };
+    }
+
+    private asegurarCodigoReserva(reserva: any): string {
+        if (!reserva.codigo) {
+            reserva.codigo = this.generarCodigoReserva(reserva.nombre, new Date(reserva.fecha));
+        }
+
+        return reserva.codigo;
+    }
 
     // Crear nueva reserva
     async createReserva(createReservaDto: CreateReservaDto): Promise<Reserva> {
@@ -30,14 +125,14 @@ export class ReservasService {
         hoy.setHours(0, 0, 0, 0);
         fechaReserva.setHours(0, 0, 0, 0);
 
-        /* const diferenciaDias = Math.ceil((fechaReserva.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
+        const diferenciaDias = Math.ceil((fechaReserva.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
 
         if (diferenciaDias < 2) {
             throw new HttpException(
                 'Las reservas deben realizarse con al menos 2 días de anticipación',
                 HttpStatus.BAD_REQUEST,
             );
-        } */
+        } 
 
         let aulasIds: string[] = [];
 
@@ -237,6 +332,8 @@ export class ReservasService {
             );
         }
 
+        const codigoReserva = this.generarCodigoReserva(createReservaDto.nombre, fechaNormalizada);
+
         // Crear la reserva
         const nuevaReserva = new this.reservaModel({
             ...createReservaDto,
@@ -244,6 +341,7 @@ export class ReservasService {
             aulas: aulasIds,
             equipos: tipo === 'equipo' ? equiposConNombres : [],
             estado: estadoInicial,
+            codigo: codigoReserva,
         });
 
         const saved = await nuevaReserva.save();
@@ -286,47 +384,42 @@ export class ReservasService {
         }
 
         // Retornar la reserva guardada con las aulas pobladas
-        const reservaFinal = await this.reservaModel
-            .findById(saved._id)
-            .populate('aulas', 'name codigo description imageUrl disponibilidad')
-            .populate('equipos.equipo', 'name')
-            .exec();
-        
-        if (!reservaFinal) {
-            throw new HttpException('Error al recuperar la reserva creada', HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-
-        // Transformar la respuesta para aplanar la estructura de equipos
-        const reservaObj: any = reservaFinal.toObject();
-        if (reservaObj.equipos && reservaObj.equipos.length > 0) {
-            reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
-                equipo: eq.equipo?._id || eq.equipo,
-                nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
-                cantidad: eq.cantidad || 1,
-                _id: eq._id
-            }));
-        }
-
-        const fechaLegible = new Date(reservaObj.fecha).toLocaleDateString('es-PE', { dateStyle: 'full' });
-        const aulaReservada = Array.isArray(reservaObj.aulas) ? reservaObj.aulas[0] : undefined;
-        const aulaNombre = aulaReservada?.name || aulaReservada?.codigo;
-        const ambienteDescripcion =
-            reservaObj.tipo === 'equipo'
-                ? aulaNombre ? `Equipos en ${aulaNombre}` : 'Reserva de equipos'
-                : aulaNombre || 'Ambiente reservado';
+        const {
+            reservaObj,
+            fechaLegible,
+            ambienteDescripcion,
+            codigoReserva: codigoReservaFinal,
+            codigoAlumno,
+        } = await this.construirContextoReserva(saved.id);
 
         try {
-            await this.mailService.sendReservaEmail(
-                reservaObj.correo,
-                reservaObj.nombre,
-                fechaLegible,
-                ambienteDescripcion,
-                { inicio: reservaObj.horaInicio, fin: reservaObj.horaFin },
-                reservaObj.equipos,
-            );
+            await this.mailService.sendReservaEmail({
+                email: reservaObj.correo,
+                nombre: reservaObj.nombre,
+                fecha: fechaLegible,
+                ambiente: ambienteDescripcion,
+                horario: { inicio: reservaObj.horaInicio, fin: reservaObj.horaFin },
+                equipos: reservaObj.equipos,
+                codigoReserva: codigoReservaFinal,
+                codigoAlumno,
+            });
         } catch (mailError) {
             this.logger.error(`No se pudo enviar correo de reserva ${reservaObj._id}`, mailError as Error);
         }
+
+        await this.mailService.notifyReservaAdmin({
+            reservaId: String(reservaObj._id),
+            usuario: reservaObj.nombre,
+            correoUsuario: reservaObj.correo,
+            fecha: fechaLegible,
+            ambiente: ambienteDescripcion,
+            horario: { inicio: reservaObj.horaInicio, fin: reservaObj.horaFin },
+            tipo: reservaObj.tipo,
+            motivo: reservaObj.motivo,
+            equipos: reservaObj.equipos,
+            codigoReserva: codigoReservaFinal,
+            codigoAlumno,
+        });
 
         return reservaObj;
     }
@@ -412,6 +505,8 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
+        this.asegurarCodigoReserva(reserva);
+
         if (reserva.estado === 'cancelada') {
             throw new HttpException(
                 'No se puede reprogramar una reserva cancelada',
@@ -456,6 +551,12 @@ export class ReservasService {
             reserva.reprogramaciones = [];
         }
 
+        const fechaAnterior = new Date(reserva.fecha);
+        const horarioAnterior = {
+            inicio: reserva.horaInicio,
+            fin: reserva.horaFin,
+        };
+
         reserva.reprogramaciones.push({
             fechaReprogramacion: new Date(),
             fechaAnterior: reserva.fecha,
@@ -474,7 +575,29 @@ export class ReservasService {
         reserva.estado = 'reprogramada';
         reserva.updatedAt = new Date();
 
-        return await reserva.save();
+        const reservaActualizada = await reserva.save();
+
+        const contexto = await this.construirContextoReserva(reservaActualizada.id);
+
+        try {
+            await this.mailService.sendReprogramacionEmail({
+                email: contexto.reservaObj.correo,
+                nombre: contexto.reservaObj.nombre,
+                codigoReserva: contexto.codigoReserva,
+                codigoAlumno: contexto.codigoAlumno,
+                fechaAnterior: fechaAnterior.toLocaleDateString('es-PE', { dateStyle: 'full' }),
+                fechaNueva: contexto.fechaLegible,
+                horarioAnterior,
+                horarioNuevo: { inicio: contexto.reservaObj.horaInicio, fin: contexto.reservaObj.horaFin },
+                ambiente: contexto.ambienteDescripcion,
+                motivo: motivo || 'Sin motivo especificado',
+                equipos: contexto.reservaObj.equipos,
+            });
+        } catch (mailError) {
+            this.logger.error(`No se pudo notificar reprogramación ${reservaActualizada._id}`, mailError as Error);
+        }
+
+        return reservaActualizada;
     }
 
     // Cancelar reserva (solo admin o el mismo usuario)
@@ -489,6 +612,8 @@ export class ReservasService {
         if (!reserva) {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
+
+        this.asegurarCodigoReserva(reserva);
 
         // Permitir cancelación si es admin O si es el mismo usuario
         if (!isAdmin && (!correoUsuario || correoUsuario !== reserva.correo)) {
@@ -522,7 +647,27 @@ export class ReservasService {
         }
         reserva.updatedAt = new Date();
 
-        return await reserva.save();
+        const reservaCancelada = await reserva.save();
+
+        const contexto = await this.construirContextoReserva(reservaCancelada.id);
+        const motivoCorreo = motivoCancelacion || 'Sin motivo proporcionado';
+
+        try {
+            await this.mailService.sendCancelacionEmail({
+                email: contexto.reservaObj.correo,
+                nombre: contexto.reservaObj.nombre,
+                codigoReserva: contexto.codigoReserva,
+                codigoAlumno: contexto.codigoAlumno,
+                fecha: contexto.fechaLegible,
+                horario: { inicio: contexto.reservaObj.horaInicio, fin: contexto.reservaObj.horaFin },
+                ambiente: contexto.ambienteDescripcion,
+                motivoCancelacion: motivoCorreo,
+            });
+        } catch (mailError) {
+            this.logger.error(`No se pudo notificar cancelación ${reservaCancelada._id}`, mailError as Error);
+        }
+
+        return reservaCancelada;
     }
 
     // Eliminar reserva
@@ -764,6 +909,8 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
+        this.asegurarCodigoReserva(reserva);
+
         const nuevaIncidencia = {
             descripcion,
             tipo,
@@ -781,7 +928,41 @@ export class ReservasService {
         reserva.incidencias.push(nuevaIncidencia);
         reserva.updatedAt = new Date();
 
-        return await reserva.save();
+        const reservaConIncidencia = await reserva.save();
+
+        const contexto = await this.construirContextoReserva(reservaConIncidencia.id);
+        const incidenciaRegistrada: any = reservaConIncidencia.incidencias
+            ? reservaConIncidencia.incidencias[reservaConIncidencia.incidencias.length - 1]
+            : null;
+
+        if (incidenciaRegistrada) {
+            try {
+                await this.mailService.sendIncidenciaEmail({
+                    email: contexto.reservaObj.correo,
+                    nombre: contexto.reservaObj.nombre,
+                    codigoReserva: contexto.codigoReserva,
+                    codigoAlumno: contexto.codigoAlumno,
+                    fechaReserva: contexto.fechaLegible,
+                    ambiente: contexto.ambienteDescripcion,
+                    incidencia: {
+                        id: incidenciaRegistrada._id?.toString() || 'SIN-ID',
+                        descripcion: incidenciaRegistrada.descripcion,
+                        tipo: incidenciaRegistrada.tipo,
+                        prioridad: incidenciaRegistrada.prioridad,
+                        estado: incidenciaRegistrada.estado,
+                        fechaReporte: new Date(incidenciaRegistrada.reportadoEn || Date.now()).toLocaleString('es-PE', {
+                            dateStyle: 'full',
+                            timeStyle: 'short',
+                        }),
+                        reportadoPor: incidenciaRegistrada.reportadoPor,
+                    },
+                });
+            } catch (mailError) {
+                this.logger.error(`No se pudo notificar incidencia ${reservaConIncidencia._id}`, mailError as Error);
+            }
+        }
+
+        return reservaConIncidencia;
     }
 
     // Actualizar estado de incidencia
@@ -796,6 +977,8 @@ export class ReservasService {
         if (!reserva) {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
+
+        this.asegurarCodigoReserva(reserva);
 
         if (!reserva.incidencias || reserva.incidencias.length === 0) {
             throw new HttpException(
@@ -896,6 +1079,8 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
+        this.asegurarCodigoReserva(reserva);
+
         if (!reserva.incidencias || reserva.incidencias.length === 0) {
             throw new HttpException(
                 'No hay incidencias en esta reserva',
@@ -956,6 +1141,7 @@ export class ReservasService {
                 }
 
                 reserva.updatedAt = new Date();
+                this.asegurarCodigoReserva(reserva);
                 await reserva.save();
                 actualizadas++;
 
@@ -1235,6 +1421,236 @@ export class ReservasService {
                 `Error al obtener estadísticas del dashboard: ${error.message}`,
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
+        }
+    }
+
+    // ===== REPORTES =====
+    async exportReservasToExcel(filtros?: {
+        fechaInicio?: string;
+        fechaFin?: string;
+        periodo?: 'dia' | 'semana' | 'mes' | 'trimestre' | 'semestre' | 'anio';
+        fechaReferencia?: string;
+        estado?: string;
+        tipo?: 'aula' | 'equipo';
+    }): Promise<{ buffer: Buffer; fileName: string; total: number }> {
+        try {
+            const query: Record<string, any> = {};
+
+            let rangoInicio: Date | undefined;
+            let rangoFin: Date | undefined;
+
+            if (filtros?.fechaInicio || filtros?.fechaFin) {
+                if (filtros.fechaInicio) {
+                    rangoInicio = new Date(filtros.fechaInicio);
+                    rangoInicio.setHours(0, 0, 0, 0);
+                }
+                if (filtros.fechaFin) {
+                    rangoFin = new Date(filtros.fechaFin);
+                    rangoFin.setHours(23, 59, 59, 999);
+                }
+                if (rangoInicio && !rangoFin) {
+                    rangoFin = new Date();
+                    rangoFin.setHours(23, 59, 59, 999);
+                }
+                if (rangoFin && !rangoInicio) {
+                    rangoInicio = new Date(1970, 0, 1);
+                    rangoInicio.setHours(0, 0, 0, 0);
+                }
+            } else if (filtros?.periodo) {
+                const referencia = filtros.fechaReferencia
+                    ? new Date(filtros.fechaReferencia)
+                    : new Date();
+                ({ inicio: rangoInicio, fin: rangoFin } = this.calcularRangoPorPeriodo(
+                    filtros.periodo,
+                    referencia,
+                ));
+            }
+
+            if (rangoInicio || rangoFin) {
+                query.fecha = {};
+                if (rangoInicio) {
+                    query.fecha.$gte = rangoInicio;
+                }
+                if (rangoFin) {
+                    query.fecha.$lte = rangoFin;
+                }
+            }
+
+            if (filtros?.estado) {
+                query.estado = filtros.estado;
+            }
+
+            if (filtros?.tipo) {
+                query.tipo = filtros.tipo;
+            }
+
+            const reservas = await this.reservaModel
+                .find(query)
+                .populate('aulas', 'name codigo')
+                .populate('equipos.equipo', 'name')
+                .sort({ fecha: 1, horaInicio: 1 })
+                .exec();
+
+            const workbook = new Workbook();
+            const worksheet = workbook.addWorksheet('Reservas');
+
+            worksheet.columns = [
+                { header: 'Código', key: 'codigo', width: 18 },
+                { header: 'Solicitante', key: 'nombre', width: 24 },
+                { header: 'Correo', key: 'correo', width: 28 },
+                { header: 'Tipo', key: 'tipo', width: 12 },
+                { header: 'Fecha', key: 'fecha', width: 14 },
+                { header: 'Hora inicio', key: 'horaInicio', width: 14 },
+                { header: 'Hora fin', key: 'horaFin', width: 14 },
+                { header: 'Estado', key: 'estado', width: 16 },
+                { header: 'Ambiente/Aula', key: 'aula', width: 24 },
+                { header: 'Equipos', key: 'equipos', width: 40 },
+                { header: 'Creado en', key: 'creado', width: 20 },
+            ];
+
+            const opcionesFecha: Intl.DateTimeFormatOptions = {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+            };
+            const opcionesFechaHora: Intl.DateTimeFormatOptions = {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+            };
+
+            reservas.forEach((reservaDoc: any) => {
+                const reserva = reservaDoc.toObject();
+                this.asegurarCodigoReserva(reserva);
+
+                let aula = 'Sin aula';
+                if (Array.isArray(reserva.aulas) && reserva.aulas.length > 0) {
+                    const aulaReferenciada = reserva.aulas[0];
+                    if (typeof aulaReferenciada === 'string') {
+                        aula = aulaReferenciada;
+                    } else if (aulaReferenciada) {
+                        aula = aulaReferenciada.name || aulaReferenciada.codigo || 'Sin aula';
+                    }
+                }
+
+                const equiposTexto = Array.isArray(reserva.equipos) && reserva.equipos.length > 0
+                    ? reserva.equipos
+                        .map((eq: any) => {
+                            const equipoNombre = eq.nombre
+                                || (typeof eq.equipo === 'object' ? eq.equipo?.name : undefined)
+                                || 'Equipo';
+                            const cantidad = eq.cantidad || 1;
+                            return `${equipoNombre} (x${cantidad})`;
+                        })
+                        .join(', ')
+                    : 'N/A';
+
+                worksheet.addRow({
+                    codigo: reserva.codigo,
+                    nombre: reserva.nombre,
+                    correo: reserva.correo,
+                    tipo: reserva.tipo,
+                    fecha: reserva.fecha
+                        ? new Date(reserva.fecha).toLocaleDateString('es-PE', opcionesFecha)
+                        : '',
+                    horaInicio: reserva.horaInicio,
+                    horaFin: reserva.horaFin,
+                    estado: reserva.estado,
+                    aula,
+                    equipos: equiposTexto,
+                    creado: reserva.createdAt
+                        ? new Date(reserva.createdAt).toLocaleString('es-PE', opcionesFechaHora)
+                        : '',
+                });
+            });
+
+            const headerRow = worksheet.getRow(1);
+            headerRow.font = { bold: true };
+            headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+
+            const borderStyle = {
+                top: { style: 'thin' },
+                left: { style: 'thin' },
+                bottom: { style: 'thin' },
+                right: { style: 'thin' },
+            } as const;
+
+            worksheet.eachRow((row) => {
+                row.eachCell((cell) => {
+                    cell.border = borderStyle;
+                    cell.alignment = cell.alignment || { horizontal: 'left', vertical: 'middle', wrapText: true };
+                });
+            });
+
+            const writeResult = await workbook.xlsx.writeBuffer();
+            const buffer = Buffer.isBuffer(writeResult)
+                ? writeResult
+                : Buffer.from(writeResult); 
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const fileName = `reporte_reservas_${timestamp}.xlsx`;
+
+            return { buffer, fileName, total: reservas.length };
+        } catch (error) {
+            this.logger.error('Error al generar reporte de reservas', error as Error);
+            throw new HttpException(
+                'No se pudo generar el reporte de reservas',
+                HttpStatus.INTERNAL_SERVER_ERROR,
+            );
+        }
+    }
+
+    private calcularRangoPorPeriodo(
+        periodo: 'dia' | 'semana' | 'mes' | 'trimestre' | 'semestre' | 'anio',
+        referencia: Date,
+    ): { inicio: Date; fin: Date } {
+        const inicio = new Date(referencia);
+        inicio.setHours(0, 0, 0, 0);
+        const fin = new Date(referencia);
+        fin.setHours(23, 59, 59, 999);
+
+        const month = inicio.getMonth();
+        const year = inicio.getFullYear();
+
+        switch (periodo) {
+            case 'dia':
+                return { inicio, fin };
+            case 'semana': {
+                const dayOfWeek = inicio.getDay();
+                const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+                inicio.setDate(inicio.getDate() - diffToMonday);
+                fin.setTime(inicio.getTime());
+                fin.setDate(inicio.getDate() + 6);
+                fin.setHours(23, 59, 59, 999);
+                return { inicio, fin };
+            }
+            case 'mes': {
+                inicio.setDate(1);
+                fin.setMonth(month + 1);
+                fin.setDate(0);
+                fin.setHours(23, 59, 59, 999);
+                return { inicio, fin };
+            }
+            case 'trimestre': {
+                const quarterStartMonth = Math.floor(month / 3) * 3;
+                inicio.setMonth(quarterStartMonth, 1);
+                fin.setMonth(quarterStartMonth + 3, 0);
+                fin.setHours(23, 59, 59, 999);
+                return { inicio, fin };
+            }
+            case 'semestre': {
+                const semesterStartMonth = month < 6 ? 0 : 6;
+                inicio.setMonth(semesterStartMonth, 1);
+                fin.setMonth(semesterStartMonth + 6, 0);
+                fin.setHours(23, 59, 59, 999);
+                return { inicio, fin };
+            }
+            case 'anio': {
+                inicio.setMonth(0, 1);
+                fin.setFullYear(year, 11, 31);
+                fin.setHours(23, 59, 59, 999);
+                return { inicio, fin };
+            }
+            default:
+                return { inicio, fin };
         }
     }
 } 
