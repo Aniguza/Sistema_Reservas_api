@@ -7,6 +7,7 @@ import { Equipo } from '../equipos/interfaces/equipos.interface';
 import { MailService } from '../mail/mail.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
+import { Workbook } from 'exceljs';
 
 @Injectable()
 export class ReservasService {
@@ -1420,6 +1421,236 @@ export class ReservasService {
                 `Error al obtener estadísticas del dashboard: ${error.message}`,
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
+        }
+    }
+
+    // ===== REPORTES =====
+    async exportReservasToExcel(filtros?: {
+        fechaInicio?: string;
+        fechaFin?: string;
+        periodo?: 'dia' | 'semana' | 'mes' | 'trimestre' | 'semestre' | 'anio';
+        fechaReferencia?: string;
+        estado?: string;
+        tipo?: 'aula' | 'equipo';
+    }): Promise<{ buffer: Buffer; fileName: string; total: number }> {
+        try {
+            const query: Record<string, any> = {};
+
+            let rangoInicio: Date | undefined;
+            let rangoFin: Date | undefined;
+
+            if (filtros?.fechaInicio || filtros?.fechaFin) {
+                if (filtros.fechaInicio) {
+                    rangoInicio = new Date(filtros.fechaInicio);
+                    rangoInicio.setHours(0, 0, 0, 0);
+                }
+                if (filtros.fechaFin) {
+                    rangoFin = new Date(filtros.fechaFin);
+                    rangoFin.setHours(23, 59, 59, 999);
+                }
+                if (rangoInicio && !rangoFin) {
+                    rangoFin = new Date();
+                    rangoFin.setHours(23, 59, 59, 999);
+                }
+                if (rangoFin && !rangoInicio) {
+                    rangoInicio = new Date(1970, 0, 1);
+                    rangoInicio.setHours(0, 0, 0, 0);
+                }
+            } else if (filtros?.periodo) {
+                const referencia = filtros.fechaReferencia
+                    ? new Date(filtros.fechaReferencia)
+                    : new Date();
+                ({ inicio: rangoInicio, fin: rangoFin } = this.calcularRangoPorPeriodo(
+                    filtros.periodo,
+                    referencia,
+                ));
+            }
+
+            if (rangoInicio || rangoFin) {
+                query.fecha = {};
+                if (rangoInicio) {
+                    query.fecha.$gte = rangoInicio;
+                }
+                if (rangoFin) {
+                    query.fecha.$lte = rangoFin;
+                }
+            }
+
+            if (filtros?.estado) {
+                query.estado = filtros.estado;
+            }
+
+            if (filtros?.tipo) {
+                query.tipo = filtros.tipo;
+            }
+
+            const reservas = await this.reservaModel
+                .find(query)
+                .populate('aulas', 'name codigo')
+                .populate('equipos.equipo', 'name')
+                .sort({ fecha: 1, horaInicio: 1 })
+                .exec();
+
+            const workbook = new Workbook();
+            const worksheet = workbook.addWorksheet('Reservas');
+
+            worksheet.columns = [
+                { header: 'Código', key: 'codigo', width: 18 },
+                { header: 'Solicitante', key: 'nombre', width: 24 },
+                { header: 'Correo', key: 'correo', width: 28 },
+                { header: 'Tipo', key: 'tipo', width: 12 },
+                { header: 'Fecha', key: 'fecha', width: 14 },
+                { header: 'Hora inicio', key: 'horaInicio', width: 14 },
+                { header: 'Hora fin', key: 'horaFin', width: 14 },
+                { header: 'Estado', key: 'estado', width: 16 },
+                { header: 'Ambiente/Aula', key: 'aula', width: 24 },
+                { header: 'Equipos', key: 'equipos', width: 40 },
+                { header: 'Creado en', key: 'creado', width: 20 },
+            ];
+
+            const opcionesFecha: Intl.DateTimeFormatOptions = {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+            };
+            const opcionesFechaHora: Intl.DateTimeFormatOptions = {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+            };
+
+            reservas.forEach((reservaDoc: any) => {
+                const reserva = reservaDoc.toObject();
+                this.asegurarCodigoReserva(reserva);
+
+                let aula = 'Sin aula';
+                if (Array.isArray(reserva.aulas) && reserva.aulas.length > 0) {
+                    const aulaReferenciada = reserva.aulas[0];
+                    if (typeof aulaReferenciada === 'string') {
+                        aula = aulaReferenciada;
+                    } else if (aulaReferenciada) {
+                        aula = aulaReferenciada.name || aulaReferenciada.codigo || 'Sin aula';
+                    }
+                }
+
+                const equiposTexto = Array.isArray(reserva.equipos) && reserva.equipos.length > 0
+                    ? reserva.equipos
+                        .map((eq: any) => {
+                            const equipoNombre = eq.nombre
+                                || (typeof eq.equipo === 'object' ? eq.equipo?.name : undefined)
+                                || 'Equipo';
+                            const cantidad = eq.cantidad || 1;
+                            return `${equipoNombre} (x${cantidad})`;
+                        })
+                        .join(', ')
+                    : 'N/A';
+
+                worksheet.addRow({
+                    codigo: reserva.codigo,
+                    nombre: reserva.nombre,
+                    correo: reserva.correo,
+                    tipo: reserva.tipo,
+                    fecha: reserva.fecha
+                        ? new Date(reserva.fecha).toLocaleDateString('es-PE', opcionesFecha)
+                        : '',
+                    horaInicio: reserva.horaInicio,
+                    horaFin: reserva.horaFin,
+                    estado: reserva.estado,
+                    aula,
+                    equipos: equiposTexto,
+                    creado: reserva.createdAt
+                        ? new Date(reserva.createdAt).toLocaleString('es-PE', opcionesFechaHora)
+                        : '',
+                });
+            });
+
+            const headerRow = worksheet.getRow(1);
+            headerRow.font = { bold: true };
+            headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+
+            const borderStyle = {
+                top: { style: 'thin' },
+                left: { style: 'thin' },
+                bottom: { style: 'thin' },
+                right: { style: 'thin' },
+            } as const;
+
+            worksheet.eachRow((row) => {
+                row.eachCell((cell) => {
+                    cell.border = borderStyle;
+                    cell.alignment = cell.alignment || { horizontal: 'left', vertical: 'middle', wrapText: true };
+                });
+            });
+
+            const writeResult = await workbook.xlsx.writeBuffer();
+            const buffer = Buffer.isBuffer(writeResult)
+                ? writeResult
+                : Buffer.from(writeResult); 
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const fileName = `reporte_reservas_${timestamp}.xlsx`;
+
+            return { buffer, fileName, total: reservas.length };
+        } catch (error) {
+            this.logger.error('Error al generar reporte de reservas', error as Error);
+            throw new HttpException(
+                'No se pudo generar el reporte de reservas',
+                HttpStatus.INTERNAL_SERVER_ERROR,
+            );
+        }
+    }
+
+    private calcularRangoPorPeriodo(
+        periodo: 'dia' | 'semana' | 'mes' | 'trimestre' | 'semestre' | 'anio',
+        referencia: Date,
+    ): { inicio: Date; fin: Date } {
+        const inicio = new Date(referencia);
+        inicio.setHours(0, 0, 0, 0);
+        const fin = new Date(referencia);
+        fin.setHours(23, 59, 59, 999);
+
+        const month = inicio.getMonth();
+        const year = inicio.getFullYear();
+
+        switch (periodo) {
+            case 'dia':
+                return { inicio, fin };
+            case 'semana': {
+                const dayOfWeek = inicio.getDay();
+                const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+                inicio.setDate(inicio.getDate() - diffToMonday);
+                fin.setTime(inicio.getTime());
+                fin.setDate(inicio.getDate() + 6);
+                fin.setHours(23, 59, 59, 999);
+                return { inicio, fin };
+            }
+            case 'mes': {
+                inicio.setDate(1);
+                fin.setMonth(month + 1);
+                fin.setDate(0);
+                fin.setHours(23, 59, 59, 999);
+                return { inicio, fin };
+            }
+            case 'trimestre': {
+                const quarterStartMonth = Math.floor(month / 3) * 3;
+                inicio.setMonth(quarterStartMonth, 1);
+                fin.setMonth(quarterStartMonth + 3, 0);
+                fin.setHours(23, 59, 59, 999);
+                return { inicio, fin };
+            }
+            case 'semestre': {
+                const semesterStartMonth = month < 6 ? 0 : 6;
+                inicio.setMonth(semesterStartMonth, 1);
+                fin.setMonth(semesterStartMonth + 6, 0);
+                fin.setHours(23, 59, 59, 999);
+                return { inicio, fin };
+            }
+            case 'anio': {
+                inicio.setMonth(0, 1);
+                fin.setFullYear(year, 11, 31);
+                fin.setHours(23, 59, 59, 999);
+                return { inicio, fin };
+            }
+            default:
+                return { inicio, fin };
         }
     }
 } 
