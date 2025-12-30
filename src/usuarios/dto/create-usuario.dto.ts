@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength, IsEnum } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength, IsEnum, ValidateIf } from 'class-validator';
 
 export class CreateUsuarioDto {
     @IsEmail({}, { message: 'Debe proporcionar un correo válido' })
@@ -9,9 +9,10 @@ export class CreateUsuarioDto {
     @IsNotEmpty({ message: 'El nombre es obligatorio' })
     nombre: string;
 
+    @ValidateIf(({ rol }) => rol === 'alumno')
     @IsString({ message: 'La carrera debe ser un texto' })
-    @IsNotEmpty({ message: 'La carrera es obligatoria' })
-    carrera: string;
+    @IsNotEmpty({ message: 'La carrera es obligatoria para alumnos' })
+    carrera?: string;
 
     @IsEnum(['docente', 'alumno', 'administrador'], {
         message: 'El rol debe ser: docente, alumno o administrador',

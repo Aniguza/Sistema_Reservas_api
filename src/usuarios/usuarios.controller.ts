@@ -7,6 +7,7 @@ import { UpdateUsuarioDto } from './dto/update-usuario.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { ParseObjectIdPipe } from '../common/pipes/parse-objectid.pipe';
 
 @Controller('usuarios')
 export class UsuariosController {
@@ -47,21 +48,6 @@ export class UsuariosController {
         }
     }
 
-    // Obtener usuario por ID (TODOS los roles autenticados)
-    @Get('/:id')
-    @UseGuards(JwtAuthGuard)
-    async getUsuarioById(@Res() response, @Param('id') id: string) {
-        try {
-            const usuario = await this.usuariosService.getUsuarioById(id);
-            return response.status(HttpStatus.OK).json(usuario);
-        } catch (error) {
-            return response.status(HttpStatus.BAD_REQUEST).json({
-                message: 'Error al obtener el usuario',
-                error: error.message,
-            });
-        }
-    }
-
     // Obtener perfil de usuario por correo (TODOS los roles autenticados)
     @Get('/perfil/:correo')
     @UseGuards(JwtAuthGuard)
@@ -77,11 +63,33 @@ export class UsuariosController {
         }
     }
 
+    // Obtener usuario por ID (TODOS los roles autenticados)
+    @Get('/:id')
+    @UseGuards(JwtAuthGuard)
+    async getUsuarioById(
+        @Res() response,
+        @Param('id', ParseObjectIdPipe) id: string,
+    ) {
+        try {
+            const usuario = await this.usuariosService.getUsuarioById(id);
+            return response.status(HttpStatus.OK).json(usuario);
+        } catch (error) {
+            return response.status(HttpStatus.BAD_REQUEST).json({
+                message: 'Error al obtener el usuario',
+                error: error.message,
+            });
+        }
+    }
+
     // Actualizar usuario (SOLO ADMIN)
     @Put('update/:id')
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles('administrador')
-    async update(@Res() response, @Param('id') id: string, @Body() updateUsuarioDto: UpdateUsuarioDto) {
+    async update(
+        @Res() response,
+        @Param('id', ParseObjectIdPipe) id: string,
+        @Body() updateUsuarioDto: UpdateUsuarioDto,
+    ) {
         try {
             const usuario = await this.usuariosService.updateUsuario(id, updateUsuarioDto);
             return response.status(HttpStatus.OK).json(usuario);
@@ -97,7 +105,7 @@ export class UsuariosController {
     @Delete('/delete/:id')
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles('administrador')
-    async remove(@Res() response, @Param('id') id: string) {
+    async remove(@Res() response, @Param('id', ParseObjectIdPipe) id: string) {
         try {
             const usuario = await this.usuariosService.remove(id);
             return response.status(HttpStatus.OK).json({

@@ -13,26 +13,52 @@ import { Workbook } from 'exceljs';
 export class ReservasService {
     private readonly logger = new Logger(ReservasService.name);
 
-    private generarCodigoReserva(nombre: string, fecha: Date): string {
-        const initials = this.obtenerIniciales(nombre);
-        const year = fecha.getFullYear();
-        const month = String(fecha.getMonth() + 1).padStart(2, '0');
-        const day = String(fecha.getDate()).padStart(2, '0');
-        return `RES-${initials}-${year}${month}${day}`;
-    }
-
-    private obtenerIniciales(nombre: string): string {
-        if (!nombre) {
-            return 'SININI';
+    private normalizarCodigoAula(codigo?: string): string | undefined {
+        if (!codigo) {
+            return undefined;
         }
 
-        const initials = nombre
-            .split(/\s+/)
-            .filter(Boolean)
-            .map((parte) => this.quitarAcentos(parte.charAt(0)).toUpperCase())
-            .join('');
+        const limpio = codigo.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+        return limpio || undefined;
+    }
 
-        return initials || 'SININI';
+    private async generarCodigoReserva(
+        fecha: Date,
+        opciones: { codigoAula?: string; excludeId?: string } = {},
+    ): Promise<string> {
+        const fechaReferencia = new Date(fecha);
+
+        if (Number.isNaN(fechaReferencia.getTime())) {
+            throw new Error('Fecha invalida para generar codigo de reserva');
+        }
+
+        const year = fechaReferencia.getFullYear();
+        const month = String(fechaReferencia.getMonth() + 1).padStart(2, '0');
+        const day = String(fechaReferencia.getDate()).padStart(2, '0');
+
+        const inicioDia = new Date(fechaReferencia);
+        inicioDia.setHours(0, 0, 0, 0);
+
+        const finDia = new Date(inicioDia);
+        finDia.setDate(finDia.getDate() + 1);
+
+        const filtro: any = {
+            fecha: {
+                $gte: inicioDia,
+                $lt: finDia,
+            },
+        };
+
+        if (opciones.excludeId) {
+            filtro._id = { $ne: opciones.excludeId };
+        }
+
+        const correlativo = await this.reservaModel.countDocuments(filtro);
+        const correlativoStr = String(correlativo + 1).padStart(2, '0');
+
+        const codigoAula = this.normalizarCodigoAula(opciones.codigoAula) ?? 'SINLAB';
+
+        return `RES-PIU-${codigoAula}-${year}${month}${day}-${correlativoStr}`;
     }
 
     private quitarAcentos(texto: string): string {
@@ -86,7 +112,10 @@ export class ReservasService {
 
         let codigoReserva = reservaObj.codigo;
         if (!codigoReserva) {
-            codigoReserva = this.generarCodigoReserva(reservaObj.nombre, new Date(reservaObj.fecha));
+            codigoReserva = await this.generarCodigoReserva(new Date(reservaObj.fecha), {
+                codigoAula: aulaReservada?.codigo,
+                excludeId: reservaObj._id ? String(reservaObj._id) : undefined,
+            });
             try {
                 await this.reservaModel.findByIdAndUpdate(reservaObj._id, { codigo: codigoReserva }).exec();
                 reservaObj.codigo = codigoReserva;
@@ -106,12 +135,90 @@ export class ReservasService {
         };
     }
 
-    private asegurarCodigoReserva(reserva: any): string {
+    private async asegurarCodigoReserva(reserva: any): Promise<string> {
         if (!reserva.codigo) {
-            reserva.codigo = this.generarCodigoReserva(reserva.nombre, new Date(reserva.fecha));
+            let codigoAula: string | undefined;
+
+            if (Array.isArray(reserva.aulas) && reserva.aulas.length > 0) {
+                const primerAulaId = reserva.aulas[0];
+
+                if (primerAulaId) {
+                    const aulaDoc: any = await this.aulaModel
+                        .findById(primerAulaId)
+                        .select('codigo')
+                        .lean()
+                        .exec();
+
+                    codigoAula = aulaDoc?.codigo;
+                }
+            }
+
+            reserva.codigo = await this.generarCodigoReserva(new Date(reserva.fecha), {
+                codigoAula,
+                excludeId: reserva._id ? String(reserva._id) : undefined,
+            });
         }
 
         return reserva.codigo;
+    }
+
+    private mapEquiposAplanados(reservaObj: any): void {
+        if (Array.isArray(reservaObj.equipos) && reservaObj.equipos.length > 0) {
+            reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
+                equipo: eq.equipo?._id || eq.equipo,
+                nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
+                cantidad: eq.cantidad || 1,
+                _id: eq._id,
+            }));
+        }
+    }
+
+    private async mapCompanerosDetallados(reservaObj: any): Promise<void> {
+        if (!Array.isArray(reservaObj.companeros) || reservaObj.companeros.length === 0) {
+            return;
+        }
+
+        const primerElemento = reservaObj.companeros[0];
+        if (primerElemento && typeof primerElemento === 'object' && 'id' in primerElemento) {
+            return;
+        }
+
+        try {
+            const ids = reservaObj.companeros.map((comp: any) => comp.toString());
+            const Usuario = this.reservaModel.db.model('Usuario');
+            const usuarios = await Usuario.find(
+                { _id: { $in: ids } },
+                '_id correo nombre',
+            )
+                .lean()
+                .exec();
+
+            reservaObj.companeros = ids.map((id: string) => {
+                const usuarioEncontrado = usuarios.find((usuario: any) => usuario._id.toString() === id);
+                const correo = usuarioEncontrado?.correo || '';
+                const codigo = correo ? correo.split('@')[0] : 'Sin código';
+
+                return {
+                    id,
+                    codigo,
+                    nombre: usuarioEncontrado?.nombre || 'No encontrado',
+                };
+            });
+        } catch (error) {
+            this.logger.warn(`No se pudo enriquecer la lista de compañeros: ${(error as Error).message}`);
+            reservaObj.companeros = reservaObj.companeros.map((comp: any) => ({
+                id: comp.toString(),
+                codigo: 'Sin código',
+                nombre: 'No encontrado',
+            }));
+        }
+    }
+
+    private async construirRespuestaReserva(reserva: any): Promise<any> {
+        const reservaObj = typeof reserva?.toObject === 'function' ? reserva.toObject() : { ...reserva };
+        this.mapEquiposAplanados(reservaObj);
+        await this.mapCompanerosDetallados(reservaObj);
+        return reservaObj;
     }
 
     // Crear nueva reserva
@@ -137,6 +244,8 @@ export class ReservasService {
         let aulasIds: string[] = [];
 
         // Si el tipo es 'equipo', buscar las aulas que contienen esos equipos
+        let codigoAulaSeleccionada: string | undefined;
+
         if (tipo === 'equipo') {
             if (!equipos || equipos.length === 0) {
                 throw new HttpException(
@@ -229,6 +338,7 @@ export class ReservasService {
             }
 
             aulasIds = [aulaFinal._id.toString()];
+            codigoAulaSeleccionada = aulaFinal?.codigo;
         } else if (tipo === 'aula') {
             // Si el tipo es 'aula', verificar que existe
             if (!aula) {
@@ -244,6 +354,7 @@ export class ReservasService {
             }
 
             aulasIds = [aula];
+            codigoAulaSeleccionada = aulaEncontrada.codigo;
         }
 
         // ===== VALIDACIÓN: Verificar que pase al menos 1 día completo desde cualquier reserva cercana =====
@@ -332,7 +443,9 @@ export class ReservasService {
             );
         }
 
-        const codigoReserva = this.generarCodigoReserva(createReservaDto.nombre, fechaNormalizada);
+        const codigoReserva = await this.generarCodigoReserva(fechaNormalizada, {
+            codigoAula: codigoAulaSeleccionada,
+        });
 
         // Crear la reserva
         const nuevaReserva = new this.reservaModel({
@@ -432,19 +545,9 @@ export class ReservasService {
             .populate('equipos.equipo', 'name')
             .exec();
 
-        // Transformar la respuesta para aplanar la estructura de equipos
-        return reservas.map((reserva: any) => {
-            const reservaObj = reserva.toObject();
-            if (reservaObj.equipos && reservaObj.equipos.length > 0) {
-                reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
-                    equipo: eq.equipo?._id || eq.equipo,
-                    nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
-                    cantidad: eq.cantidad || 1,
-                    _id: eq._id
-                }));
-            }
-            return reservaObj;
-        });
+        return Promise.all(
+            reservas.map((reserva: any) => this.construirRespuestaReserva(reserva)),
+        );
     }
 
     // Obtener reserva por ID
@@ -459,18 +562,7 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
-        // Transformar la respuesta para aplanar la estructura de equipos
-        const reservaObj: any = reserva.toObject();
-        if (reservaObj.equipos && reservaObj.equipos.length > 0) {
-            reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
-                equipo: eq.equipo?._id || eq.equipo,
-                nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
-                cantidad: eq.cantidad || 1,
-                _id: eq._id
-            }));
-        }
-
-        return reservaObj;
+        return this.construirRespuestaReserva(reserva);
     }
 
     // Actualizar reserva
@@ -505,7 +597,7 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
-        this.asegurarCodigoReserva(reserva);
+        await this.asegurarCodigoReserva(reserva);
 
         if (reserva.estado === 'cancelada') {
             throw new HttpException(
@@ -613,7 +705,7 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
-        this.asegurarCodigoReserva(reserva);
+        await this.asegurarCodigoReserva(reserva);
 
         // Permitir cancelación si es admin O si es el mismo usuario
         if (!isAdmin && (!correoUsuario || correoUsuario !== reserva.correo)) {
@@ -689,19 +781,9 @@ export class ReservasService {
             .populate('equipos.equipo', 'name')
             .exec();
 
-        // Transformar la respuesta para aplanar la estructura de equipos
-        return reservas.map((reserva: any) => {
-            const reservaObj = reserva.toObject();
-            if (reservaObj.equipos && reservaObj.equipos.length > 0) {
-                reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
-                    equipo: eq.equipo?._id || eq.equipo,
-                    nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
-                    cantidad: eq.cantidad || 1,
-                    _id: eq._id
-                }));
-            }
-            return reservaObj;
-        });
+        return Promise.all(
+            reservas.map((reserva: any) => this.construirRespuestaReserva(reserva)),
+        );
     }
 
     // Obtener reservas por equipo
@@ -712,19 +794,9 @@ export class ReservasService {
             .populate('equipos.equipo', 'name')
             .exec();
 
-        // Transformar la respuesta para aplanar la estructura de equipos
-        return reservas.map((reserva: any) => {
-            const reservaObj = reserva.toObject();
-            if (reservaObj.equipos && reservaObj.equipos.length > 0) {
-                reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
-                    equipo: eq.equipo?._id || eq.equipo,
-                    nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
-                    cantidad: eq.cantidad || 1,
-                    _id: eq._id
-                }));
-            }
-            return reservaObj;
-        });
+        return Promise.all(
+            reservas.map((reserva: any) => this.construirRespuestaReserva(reserva)),
+        );
     }
 
     // Obtener reservas por usuario (correo)
@@ -736,55 +808,9 @@ export class ReservasService {
             .sort({ fecha: -1 }) // Ordenar por fecha descendente (más recientes primero)
             .exec();
 
-        // Transformar la respuesta y enriquecer con nombres de compañeros
-        const reservasEnriquecidas = await Promise.all(
-            reservas.map(async (reserva: any) => {
-                const reservaObj = reserva.toObject();
-                
-                // Aplanar estructura de equipos
-                if (reservaObj.equipos && reservaObj.equipos.length > 0) {
-                    reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
-                        equipo: eq.equipo?._id || eq.equipo,
-                        nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
-                        cantidad: eq.cantidad || 1,
-                        _id: eq._id
-                    }));
-                }
-
-                // Enriquecer compañeros con sus nombres
-                if (reservaObj.companeros && reservaObj.companeros.length > 0) {
-                    try {
-                        const Usuario = this.reservaModel.db.model('Usuario');
-                        const usuarios = await Usuario.find(
-                            { _id: { $in: reservaObj.companeros } },
-                            '_id correo nombre'
-                        ).exec();
-
-                        reservaObj.companeros = reservaObj.companeros.map((id: string) => {
-                            const usuario = usuarios.find((u: any) => u._id.toString() === id);
-                            const codigo = usuario?.correo ? usuario.correo.split('@')[0] : 'Sin código';
-                            return {
-                                id: id,
-                                codigo: codigo,
-                                nombre: usuario?.nombre || 'No encontrado'
-                            };
-                        });
-                    } catch (error) {
-                        // Si hay error, mantener solo IDs
-                        console.warn('Error buscando compañeros:', error);
-                        reservaObj.companeros = reservaObj.companeros.map((id: string) => ({
-                            id: id,
-                            codigo: 'Sin código',
-                            nombre: 'No encontrado'
-                        }));
-                    }
-                }
-
-                return reservaObj;
-            })
+        return Promise.all(
+            reservas.map((reserva: any) => this.construirRespuestaReserva(reserva)),
         );
-
-        return reservasEnriquecidas;
     }
 
     // Verificar disponibilidad
@@ -909,7 +935,7 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
-        this.asegurarCodigoReserva(reserva);
+        await this.asegurarCodigoReserva(reserva);
 
         const nuevaIncidencia = {
             descripcion,
@@ -978,7 +1004,7 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
-        this.asegurarCodigoReserva(reserva);
+        await this.asegurarCodigoReserva(reserva);
 
         if (!reserva.incidencias || reserva.incidencias.length === 0) {
             throw new HttpException(
@@ -1079,7 +1105,7 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
-        this.asegurarCodigoReserva(reserva);
+        await this.asegurarCodigoReserva(reserva);
 
         if (!reserva.incidencias || reserva.incidencias.length === 0) {
             throw new HttpException(
@@ -1141,7 +1167,7 @@ export class ReservasService {
                 }
 
                 reserva.updatedAt = new Date();
-                this.asegurarCodigoReserva(reserva);
+                await this.asegurarCodigoReserva(reserva);
                 await reserva.save();
                 actualizadas++;
 
@@ -1518,17 +1544,18 @@ export class ReservasService {
                 timeStyle: 'short',
             };
 
-            reservas.forEach((reservaDoc: any) => {
+            for (const reservaDoc of reservas) {
                 const reserva = reservaDoc.toObject();
-                this.asegurarCodigoReserva(reserva);
+                await this.asegurarCodigoReserva(reserva);
 
                 let aula = 'Sin aula';
                 if (Array.isArray(reserva.aulas) && reserva.aulas.length > 0) {
                     const aulaReferenciada = reserva.aulas[0];
                     if (typeof aulaReferenciada === 'string') {
                         aula = aulaReferenciada;
-                    } else if (aulaReferenciada) {
-                        aula = aulaReferenciada.name || aulaReferenciada.codigo || 'Sin aula';
+                    } else if (aulaReferenciada && typeof aulaReferenciada === 'object') {
+                        const aulaObj = aulaReferenciada as { name?: string; codigo?: string };
+                        aula = aulaObj.name || aulaObj.codigo || 'Sin aula';
                     }
                 }
 
@@ -1561,7 +1588,7 @@ export class ReservasService {
                         ? new Date(reserva.createdAt).toLocaleString('es-PE', opcionesFechaHora)
                         : '',
                 });
-            });
+            }
 
             const headerRow = worksheet.getRow(1);
             headerRow.font = { bold: true };
