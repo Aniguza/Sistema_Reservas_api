@@ -64,7 +64,7 @@ export class UsuariosController {
     }
 
     // Obtener usuario por ID (TODOS los roles autenticados)
-    @Get('/:id([0-9a-fA-F]{24})')
+    @Get('/:id')
     @UseGuards(JwtAuthGuard)
     async getUsuarioById(
         @Res() response,
@@ -82,7 +82,7 @@ export class UsuariosController {
     }
 
     // Actualizar usuario (SOLO ADMIN)
-    @Put('update/:id([0-9a-fA-F]{24})')
+    @Put('update/:id')
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles('administrador')
     async update(
@@ -102,7 +102,7 @@ export class UsuariosController {
     }
 
     // Eliminar usuario (SOLO ADMIN)
-    @Delete('/delete/:id([0-9a-fA-F]{24})')
+    @Delete('/delete/:id')
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles('administrador')
     async remove(@Res() response, @Param('id', ParseObjectIdPipe) id: string) {
