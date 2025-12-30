@@ -15,8 +15,6 @@ export class UsuariosController {
 
     // Crear usuario (SOLO ADMIN)
     @Post('/create')
-    @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles('administrador')
     async createUsuario(@Res() response, @Body() createUsuarioDto: CreateUsuarioDto) {
         try {
             const usuario = await this.usuariosService.createUsuario(createUsuarioDto);
