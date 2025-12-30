@@ -18,7 +18,9 @@ export const UsuarioSchema = new Schema(
         },
         carrera: {
             type: String,
-            required: [true, 'La carrera es obligatoria'],
+            required: [function () {
+                return this.rol === 'alumno';
+            }, 'La carrera es obligatoria para alumnos'],
             trim: true,
         },
         rol: {
