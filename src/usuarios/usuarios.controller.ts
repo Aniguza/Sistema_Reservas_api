@@ -64,7 +64,7 @@ export class UsuariosController {
     }
 
     // Obtener usuario por ID (TODOS los roles autenticados)
-    @Get('/id/:id')
+    @Get('/:id')
     @UseGuards(JwtAuthGuard)
     async getUsuarioById(
         @Res() response,
