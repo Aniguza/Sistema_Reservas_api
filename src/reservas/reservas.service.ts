@@ -162,6 +162,65 @@ export class ReservasService {
         return reserva.codigo;
     }
 
+    private mapEquiposAplanados(reservaObj: any): void {
+        if (Array.isArray(reservaObj.equipos) && reservaObj.equipos.length > 0) {
+            reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
+                equipo: eq.equipo?._id || eq.equipo,
+                nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
+                cantidad: eq.cantidad || 1,
+                _id: eq._id,
+            }));
+        }
+    }
+
+    private async mapCompanerosDetallados(reservaObj: any): Promise<void> {
+        if (!Array.isArray(reservaObj.companeros) || reservaObj.companeros.length === 0) {
+            return;
+        }
+
+        const primerElemento = reservaObj.companeros[0];
+        if (primerElemento && typeof primerElemento === 'object' && 'id' in primerElemento) {
+            return;
+        }
+
+        try {
+            const ids = reservaObj.companeros.map((comp: any) => comp.toString());
+            const Usuario = this.reservaModel.db.model('Usuario');
+            const usuarios = await Usuario.find(
+                { _id: { $in: ids } },
+                '_id correo nombre',
+            )
+                .lean()
+                .exec();
+
+            reservaObj.companeros = ids.map((id: string) => {
+                const usuarioEncontrado = usuarios.find((usuario: any) => usuario._id.toString() === id);
+                const correo = usuarioEncontrado?.correo || '';
+                const codigo = correo ? correo.split('@')[0] : 'Sin código';
+
+                return {
+                    id,
+                    codigo,
+                    nombre: usuarioEncontrado?.nombre || 'No encontrado',
+                };
+            });
+        } catch (error) {
+            this.logger.warn(`No se pudo enriquecer la lista de compañeros: ${(error as Error).message}`);
+            reservaObj.companeros = reservaObj.companeros.map((comp: any) => ({
+                id: comp.toString(),
+                codigo: 'Sin código',
+                nombre: 'No encontrado',
+            }));
+        }
+    }
+
+    private async construirRespuestaReserva(reserva: any): Promise<any> {
+        const reservaObj = typeof reserva?.toObject === 'function' ? reserva.toObject() : { ...reserva };
+        this.mapEquiposAplanados(reservaObj);
+        await this.mapCompanerosDetallados(reservaObj);
+        return reservaObj;
+    }
+
     // Crear nueva reserva
     async createReserva(createReservaDto: CreateReservaDto): Promise<Reserva> {
         const { tipo, aula, equipos, fecha, horaInicio, horaFin } = createReservaDto;
@@ -486,19 +545,9 @@ export class ReservasService {
             .populate('equipos.equipo', 'name')
             .exec();
 
-        // Transformar la respuesta para aplanar la estructura de equipos
-        return reservas.map((reserva: any) => {
-            const reservaObj = reserva.toObject();
-            if (reservaObj.equipos && reservaObj.equipos.length > 0) {
-                reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
-                    equipo: eq.equipo?._id || eq.equipo,
-                    nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
-                    cantidad: eq.cantidad || 1,
-                    _id: eq._id
-                }));
-            }
-            return reservaObj;
-        });
+        return Promise.all(
+            reservas.map((reserva: any) => this.construirRespuestaReserva(reserva)),
+        );
     }
 
     // Obtener reserva por ID
@@ -513,18 +562,7 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
-        // Transformar la respuesta para aplanar la estructura de equipos
-        const reservaObj: any = reserva.toObject();
-        if (reservaObj.equipos && reservaObj.equipos.length > 0) {
-            reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
-                equipo: eq.equipo?._id || eq.equipo,
-                nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
-                cantidad: eq.cantidad || 1,
-                _id: eq._id
-            }));
-        }
-
-        return reservaObj;
+        return this.construirRespuestaReserva(reserva);
     }
 
     // Actualizar reserva
@@ -743,19 +781,9 @@ export class ReservasService {
             .populate('equipos.equipo', 'name')
             .exec();
 
-        // Transformar la respuesta para aplanar la estructura de equipos
-        return reservas.map((reserva: any) => {
-            const reservaObj = reserva.toObject();
-            if (reservaObj.equipos && reservaObj.equipos.length > 0) {
-                reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
-                    equipo: eq.equipo?._id || eq.equipo,
-                    nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
-                    cantidad: eq.cantidad || 1,
-                    _id: eq._id
-                }));
-            }
-            return reservaObj;
-        });
+        return Promise.all(
+            reservas.map((reserva: any) => this.construirRespuestaReserva(reserva)),
+        );
     }
 
     // Obtener reservas por equipo
@@ -766,19 +794,9 @@ export class ReservasService {
             .populate('equipos.equipo', 'name')
             .exec();
 
-        // Transformar la respuesta para aplanar la estructura de equipos
-        return reservas.map((reserva: any) => {
-            const reservaObj = reserva.toObject();
-            if (reservaObj.equipos && reservaObj.equipos.length > 0) {
-                reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
-                    equipo: eq.equipo?._id || eq.equipo,
-                    nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
-                    cantidad: eq.cantidad || 1,
-                    _id: eq._id
-                }));
-            }
-            return reservaObj;
-        });
+        return Promise.all(
+            reservas.map((reserva: any) => this.construirRespuestaReserva(reserva)),
+        );
     }
 
     // Obtener reservas por usuario (correo)
@@ -790,55 +808,9 @@ export class ReservasService {
             .sort({ fecha: -1 }) // Ordenar por fecha descendente (más recientes primero)
             .exec();
 
-        // Transformar la respuesta y enriquecer con nombres de compañeros
-        const reservasEnriquecidas = await Promise.all(
-            reservas.map(async (reserva: any) => {
-                const reservaObj = reserva.toObject();
-                
-                // Aplanar estructura de equipos
-                if (reservaObj.equipos && reservaObj.equipos.length > 0) {
-                    reservaObj.equipos = reservaObj.equipos.map((eq: any) => ({
-                        equipo: eq.equipo?._id || eq.equipo,
-                        nombre: eq.equipo?.name || eq.nombre || 'Desconocido',
-                        cantidad: eq.cantidad || 1,
-                        _id: eq._id
-                    }));
-                }
-
-                // Enriquecer compañeros con sus nombres
-                if (reservaObj.companeros && reservaObj.companeros.length > 0) {
-                    try {
-                        const Usuario = this.reservaModel.db.model('Usuario');
-                        const usuarios = await Usuario.find(
-                            { _id: { $in: reservaObj.companeros } },
-                            '_id correo nombre'
-                        ).exec();
-
-                        reservaObj.companeros = reservaObj.companeros.map((id: string) => {
-                            const usuario = usuarios.find((u: any) => u._id.toString() === id);
-                            const codigo = usuario?.correo ? usuario.correo.split('@')[0] : 'Sin código';
-                            return {
-                                id: id,
-                                codigo: codigo,
-                                nombre: usuario?.nombre || 'No encontrado'
-                            };
-                        });
-                    } catch (error) {
-                        // Si hay error, mantener solo IDs
-                        console.warn('Error buscando compañeros:', error);
-                        reservaObj.companeros = reservaObj.companeros.map((id: string) => ({
-                            id: id,
-                            codigo: 'Sin código',
-                            nombre: 'No encontrado'
-                        }));
-                    }
-                }
-
-                return reservaObj;
-            })
+        return Promise.all(
+            reservas.map((reserva: any) => this.construirRespuestaReserva(reserva)),
         );
-
-        return reservasEnriquecidas;
     }
 
     // Verificar disponibilidad
