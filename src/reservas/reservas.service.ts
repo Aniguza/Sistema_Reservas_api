@@ -239,7 +239,10 @@ export class ReservasService {
                 'Las reservas deben realizarse con al menos 2 días de anticipación',
                 HttpStatus.BAD_REQUEST,
             );
-        } 
+        }
+
+        // Validar que la fecha sea de lunes a viernes
+        this.validarDiaPermitido(fechaReserva);
 
         let aulasIds: string[] = [];
 
@@ -300,7 +303,7 @@ export class ReservasService {
             // ===== VALIDACIÓN CRÍTICA: Todos los equipos deben pertenecer a LA MISMA AULA =====
             // Verificar que todos los equipos pertenezcan a una única aula
             const aulasUnicas = new Set<string>();
-            
+
             for (const aulaDoc of aulas) {
                 const aula: any = aulaDoc;
                 // Verificar si esta aula contiene alguno de los equipos seleccionados
@@ -325,7 +328,7 @@ export class ReservasService {
             // Verificar que TODOS los equipos seleccionados estén en el aula encontrada
             const aulaFinal: any = aulas[0];
             const equiposEnAula = aulaFinal.equipos.map((e: any) => e._id.toString());
-            
+
             const todosLosEquiposEnAula = equiposIds.every((equipoId: string) =>
                 equiposEnAula.includes(equipoId)
             );
@@ -357,44 +360,12 @@ export class ReservasService {
             codigoAulaSeleccionada = aulaEncontrada.codigo;
         }
 
-        // ===== VALIDACIÓN: Verificar que pase al menos 1 día completo desde cualquier reserva cercana =====
-        // Si reservan el lunes (día 1), pueden reservar el miércoles (día 3), dejando el martes libre
-        
-        // Buscar reservas cercanas (1 día antes o 1 día después)
-        const unDiaAntes = new Date(fechaReserva);
-        unDiaAntes.setDate(fechaReserva.getDate() - 2);
-        
-        const unDiaDespues = new Date(fechaReserva);
-        unDiaDespues.setDate(fechaReserva.getDate() + 2);
-
-        const reservasCercanas = await this.reservaModel
-            .find({
-                aulas: { $in: aulasIds },
-                estado: { $in: ['pendiente', 'confirmada'] },
-                fecha: {
-                    $gte: unDiaAntes,
-                    $lt: unDiaDespues
-                }
-            })
-            .exec();
-
-        // Verificar que no haya reservas en el día anterior o siguiente (debe haber 1 día libre)
-        for (const reservaCercana of reservasCercanas) {
-            const fechaReservaCercana = new Date(reservaCercana.fecha);
-            fechaReservaCercana.setHours(0, 0, 0, 0);
-            
-            const diferenciaDias = Math.abs(Math.floor((fechaReserva.getTime() - fechaReservaCercana.getTime()) / (1000 * 60 * 60 * 24)));
-
-            // Si la diferencia es 0 (mismo día) o 1 (día consecutivo), rechazar
-            if (diferenciaDias < 2) {
-                throw new HttpException(
-                    `El aula tiene una reserva el ${fechaReservaCercana.toLocaleDateString('es-PE')}. Debe dejar al menos 1 día libre entre reservas.`,
-                    HttpStatus.BAD_REQUEST,
-                );
-            }
-        }
+        // Nota: se permite reservar el mismo día siempre que no haya solapamiento.
+        // La restricción de "dejar 1 día libre" fue eliminada para permitir reservas el mismo día.
 
         // Validar disponibilidad en el horario específico (incluye cantidades por equipo)
+        // Validar que el horario esté dentro del rango permitido (09:00-21:00)
+        this.validarHorarioPermitido(horaInicio, horaFin);
         const disponible = await this.checkDisponibilidad(
             aulasIds,
             equipos || [],
@@ -621,7 +592,12 @@ export class ReservasService {
             );
         }
 
+        // Validar que la nueva fecha sea de lunes a viernes
+        this.validarDiaPermitido(nuevaFecha);
+
         // Validar disponibilidad en la nueva fecha/hora (excluyendo esta reserva)
+        // Validar que el horario esté dentro del rango permitido (09:00-21:00)
+        this.validarHorarioPermitido(horaInicio, horaFin);
         const disponible = await this.checkDisponibilidad(
             reserva.aulas || [],
             reserva.equipos || [],
@@ -694,7 +670,7 @@ export class ReservasService {
 
     // Cancelar reserva (solo admin o el mismo usuario)
     async cancelarReserva(
-        id: string, 
+        id: string,
         isAdmin: boolean = false,
         motivoCancelacion?: string,
         correoUsuario?: string
@@ -725,7 +701,7 @@ export class ReservasService {
         // Verificar que la reserva sea futura
         const ahora = new Date();
         const fechaReserva = new Date(reserva.fecha);
-        
+
         if (fechaReserva < ahora) {
             throw new HttpException(
                 'No se puede cancelar una reserva pasada',
@@ -848,8 +824,9 @@ export class ReservasService {
         const reservasExistentes = await this.reservaModel.find(query).exec();
 
         // Verificar conflictos de horario por aula (si hay alguna reserva que se solape)
+        // Aplicar buffer de 60 minutos entre reservas del mismo aula
         for (const reserva of reservasExistentes) {
-            if (this.hayConflictoHorario(horaInicio, horaFin, reserva.horaInicio, reserva.horaFin)) {
+            if (this.hayConflictoHorario(horaInicio, horaFin, reserva.horaInicio, reserva.horaFin, 60)) {
                 // Si la reserva existente afecta a aulas solicitadas -> no disponible
                 if (aulasIds.length > 0 && reserva.aulas && reserva.aulas.some((a: any) => aulasIds.includes(a.toString()))) {
                     return false;
@@ -903,11 +880,12 @@ export class ReservasService {
         fin1: string,
         inicio2: string,
         fin2: string,
+        bufferMinutes: number = 0,
     ): boolean {
         // Convertir a minutos desde medianoche para comparar
         const toMinutes = (hora: string): number => {
             const [h, m] = hora.split(':').map(Number);
-            return h * 60 + m;
+            return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
         };
 
         const inicio1Min = toMinutes(inicio1);
@@ -915,8 +893,46 @@ export class ReservasService {
         const inicio2Min = toMinutes(inicio2);
         const fin2Min = toMinutes(fin2);
 
-        // Hay conflicto si los rangos se solapan
-        return !(fin1Min <= inicio2Min || inicio1Min >= fin2Min);
+        const buffer = Math.max(0, Math.floor(bufferMinutes));
+
+        // Considerar buffer (en minutos) alrededor de la reserva existente:
+        // No hay conflicto si fin1 <= inicio2 - buffer OR inicio1 >= fin2 + buffer
+        return !(fin1Min <= (inicio2Min - buffer) || inicio1Min >= (fin2Min + buffer));
+    }
+
+    // Validar que el horario esté dentro del rango permitido (09:00 - 21:00)
+    private validarHorarioPermitido(horaInicio: string, horaFin: string): void {
+        const toMinutes = (hora: string): number => {
+            const [h, m] = hora.split(':').map(Number);
+            return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
+        };
+
+        const inicioMin = toMinutes(horaInicio);
+        const finMin = toMinutes(horaFin);
+
+        const limiteInicio = 9 * 60; // 09:00
+        const limiteFin = 21 * 60; // 21:00
+
+        if (inicioMin < limiteInicio || finMin > limiteFin || inicioMin >= finMin) {
+            throw new HttpException(
+                'Las reservas solo se permiten entre 09:00 y 21:00 y la hora de inicio debe ser anterior a la de fin',
+                HttpStatus.BAD_REQUEST,
+            );
+        }
+    }
+
+    // Validar que la fecha sea de lunes a viernes
+    private validarDiaPermitido(fecha: Date): void {
+        const dia = new Date(fecha);
+        dia.setHours(0, 0, 0, 0);
+        const diaSemana = dia.getDay(); // 0 = domingo, 6 = sábado
+
+        if (diaSemana === 0 || diaSemana === 6) {
+            throw new HttpException(
+                'Solo puedes reservar de lunes a viernes',
+                HttpStatus.BAD_REQUEST,
+            );
+        }
     }
 
     // ===== GESTIÓN DE INCIDENCIAS =====
@@ -1212,7 +1228,7 @@ export class ReservasService {
     }
 
     // ===== DASHBOARD STATS - ENDPOINT OPTIMIZADO =====
-    
+
     // Obtener estadísticas agregadas para el dashboard en una sola llamada
     async getDashboardStats(): Promise<any> {
         try {
@@ -1240,207 +1256,207 @@ export class ReservasService {
                 this.equipoModel.find().exec()
             ]);
 
-        // ===== ESTADÍSTICAS GENERALES =====
-        const totalReservas = todasReservas.length;
-        const reservasActivas = todasReservas.filter((r: any) => 
-            r.estado === 'confirmada' || r.estado === 'en_curso'
-        ).length;
-        const reservasCanceladas = todasReservas.filter((r: any) => r.estado === 'cancelada').length;
-        const reservasCerradas = todasReservas.filter((r: any) => 
-            r.estado === 'cerrada' || r.estado === 'cerrada_con_incidencia'
-        ).length;
+            // ===== ESTADÍSTICAS GENERALES =====
+            const totalReservas = todasReservas.length;
+            const reservasActivas = todasReservas.filter((r: any) =>
+                r.estado === 'confirmada' || r.estado === 'en_curso'
+            ).length;
+            const reservasCanceladas = todasReservas.filter((r: any) => r.estado === 'cancelada').length;
+            const reservasCerradas = todasReservas.filter((r: any) =>
+                r.estado === 'cerrada' || r.estado === 'cerrada_con_incidencia'
+            ).length;
 
-        // Contar incidencias abiertas
-        let totalIncidenciasAbiertas = 0;
-        incidenciasAbiertas.forEach((r: any) => {
-            if (r.incidencias && r.incidencias.length > 0) {
-                totalIncidenciasAbiertas += r.incidencias.filter((inc: any) => 
-                    ['reportada', 'en_revision', 'en_proceso'].includes(inc.estado)
-                ).length;
+            // Contar incidencias abiertas
+            let totalIncidenciasAbiertas = 0;
+            incidenciasAbiertas.forEach((r: any) => {
+                if (r.incidencias && r.incidencias.length > 0) {
+                    totalIncidenciasAbiertas += r.incidencias.filter((inc: any) =>
+                        ['reportada', 'en_revision', 'en_proceso'].includes(inc.estado)
+                    ).length;
+                }
+            });
+
+            const stats = {
+                totalReservas,
+                reservasActivas,
+                reservasCanceladas,
+                reservasCerradas,
+                incidenciasAbiertas: totalIncidenciasAbiertas,
+                totalAulas: aulasData.length,
+                totalEquipos: equiposData.length
+            };
+
+            // ===== DATOS PARA GRÁFICAS (ÚLTIMOS 7 DÍAS) =====
+            const ultimosSieteDias: string[] = [];
+            const reservasPorDia: number[] = [];
+
+            for (let i = 6; i >= 0; i--) {
+                const fecha = new Date();
+                fecha.setDate(fecha.getDate() - i);
+                fecha.setHours(0, 0, 0, 0);
+
+                const fechaFin = new Date(fecha);
+                fechaFin.setHours(23, 59, 59, 999);
+
+                const reservasDia = todasReservas.filter((r: any) => {
+                    const fechaReserva = new Date(r.fecha);
+                    return fechaReserva >= fecha && fechaReserva <= fechaFin;
+                }).length;
+
+                const dias = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+                const label = `${dias[fecha.getDay()]} ${fecha.getDate()}`;
+                ultimosSieteDias.push(label);
+                reservasPorDia.push(reservasDia);
             }
-        });
 
-        const stats = {
-            totalReservas,
-            reservasActivas,
-            reservasCanceladas,
-            reservasCerradas,
-            incidenciasAbiertas: totalIncidenciasAbiertas,
-            totalAulas: aulasData.length,
-            totalEquipos: equiposData.length
-        };
+            const chartData = {
+                labels: ultimosSieteDias,
+                data: reservasPorDia
+            };
 
-        // ===== DATOS PARA GRÁFICAS (ÚLTIMOS 7 DÍAS) =====
-        const ultimosSieteDias: string[] = [];
-        const reservasPorDia: number[] = [];
-        
-        for (let i = 6; i >= 0; i--) {
-            const fecha = new Date();
-            fecha.setDate(fecha.getDate() - i);
-            fecha.setHours(0, 0, 0, 0);
-            
-            const fechaFin = new Date(fecha);
-            fechaFin.setHours(23, 59, 59, 999);
-            
-            const reservasDia = todasReservas.filter((r: any) => {
-                const fechaReserva = new Date(r.fecha);
-                return fechaReserva >= fecha && fechaReserva <= fechaFin;
-            }).length;
-            
-            const dias = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
-            const label = `${dias[fecha.getDay()]} ${fecha.getDate()}`;
-            ultimosSieteDias.push(label);
-            reservasPorDia.push(reservasDia);
-        }
+            // ===== RESERVAS POR MES (ÚLTIMOS 6 MESES) =====
+            const reservasPorMes: number[] = [];
+            const labelsMeses: string[] = [];
 
-        const chartData = {
-            labels: ultimosSieteDias,
-            data: reservasPorDia
-        };
+            for (let i = 5; i >= 0; i--) {
+                const fecha = new Date();
+                fecha.setMonth(fecha.getMonth() - i);
+                const mesInicio = new Date(fecha.getFullYear(), fecha.getMonth(), 1);
+                const mesFin = new Date(fecha.getFullYear(), fecha.getMonth() + 1, 0);
 
-        // ===== RESERVAS POR MES (ÚLTIMOS 6 MESES) =====
-        const reservasPorMes: number[] = [];
-        const labelsMeses: string[] = [];
-        
-        for (let i = 5; i >= 0; i--) {
-            const fecha = new Date();
-            fecha.setMonth(fecha.getMonth() - i);
-            const mesInicio = new Date(fecha.getFullYear(), fecha.getMonth(), 1);
-            const mesFin = new Date(fecha.getFullYear(), fecha.getMonth() + 1, 0);
-            
-            const reservasMes = todasReservas.filter((r: any) => {
-                const fechaReserva = new Date(r.fecha);
-                return fechaReserva >= mesInicio && fechaReserva <= mesFin;
-            }).length;
-            
-            const meses = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-            labelsMeses.push(meses[mesInicio.getMonth()]);
-            reservasPorMes.push(reservasMes);
-        }
+                const reservasMes = todasReservas.filter((r: any) => {
+                    const fechaReserva = new Date(r.fecha);
+                    return fechaReserva >= mesInicio && fechaReserva <= mesFin;
+                }).length;
 
-        const monthlyChartData = {
-            labels: labelsMeses,
-            data: reservasPorMes
-        };
-
-        // ===== RANKING DE AULAS MÁS RESERVADAS =====
-        const aulasContador: any = {};
-        
-        todasReservas.forEach((r: any) => {
-            if (r.aulas && Array.isArray(r.aulas) && r.aulas.length > 0) {
-                r.aulas.forEach((aula: any) => {
-                    if (!aula) return;
-                    
-                    let aulaId: string;
-                    let aulaNombre: string;
-                    
-                    if (typeof aula === 'object' && aula._id) {
-                        aulaId = aula._id.toString();
-                        aulaNombre = aula.name || 'Sin nombre';
-                    } else if (typeof aula === 'string') {
-                        aulaId = aula;
-                        aulaNombre = 'Sin nombre';
-                    } else {
-                        return;
-                    }
-                    
-                    if (!aulasContador[aulaId]) {
-                        aulasContador[aulaId] = { nombre: aulaNombre, count: 0 };
-                    }
-                    aulasContador[aulaId].count++;
-                });
+                const meses = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+                labelsMeses.push(meses[mesInicio.getMonth()]);
+                reservasPorMes.push(reservasMes);
             }
-        });
 
-        const aulasRanking = Object.entries(aulasContador)
-            .map(([id, data]: any) => ({ id, nombre: data.nombre, reservas: data.count }))
-            .sort((a, b) => b.reservas - a.reservas)
-            .slice(0, 5);
+            const monthlyChartData = {
+                labels: labelsMeses,
+                data: reservasPorMes
+            };
 
-        // ===== RANKING DE EQUIPOS MÁS RESERVADOS =====
-        const equiposContador: any = {};
-        
-        todasReservas.forEach((r: any) => {
-            if (r.equipos && Array.isArray(r.equipos) && r.equipos.length > 0) {
-                r.equipos.forEach((eq: any) => {
-                    if (!eq || !eq.equipo) return;
-                    
-                    let equipoId: string;
-                    let equipoNombre: string;
-                    
-                    if (typeof eq.equipo === 'object' && eq.equipo._id) {
-                        equipoId = eq.equipo._id.toString();
-                        equipoNombre = eq.equipo.name || eq.nombre || 'Sin nombre';
-                    } else if (typeof eq.equipo === 'string') {
-                        equipoId = eq.equipo;
-                        equipoNombre = eq.nombre || 'Sin nombre';
-                    } else {
-                        return;
-                    }
-                    
-                    const cantidad = eq.cantidad || 1;
-                    
-                    if (!equiposContador[equipoId]) {
-                        equiposContador[equipoId] = { nombre: equipoNombre, count: 0 };
-                    }
-                    equiposContador[equipoId].count += cantidad;
-                });
-            }
-        });
+            // ===== RANKING DE AULAS MÁS RESERVADAS =====
+            const aulasContador: any = {};
 
-        const equiposRanking = Object.entries(equiposContador)
-            .map(([id, data]: any) => ({ id, nombre: data.nombre, reservas: data.count }))
-            .sort((a, b) => b.reservas - a.reservas)
-            .slice(0, 5);
+            todasReservas.forEach((r: any) => {
+                if (r.aulas && Array.isArray(r.aulas) && r.aulas.length > 0) {
+                    r.aulas.forEach((aula: any) => {
+                        if (!aula) return;
 
-        // ===== DISTRIBUCIÓN POR TIPO =====
-        const reservasPorTipo = {
-            aula: todasReservas.filter((r: any) => r.tipo === 'aula').length,
-            equipo: todasReservas.filter((r: any) => r.tipo === 'equipo').length
-        };
+                        let aulaId: string;
+                        let aulaNombre: string;
 
-        // ===== DISTRIBUCIÓN POR ESTADO =====
-        const reservasPorEstado = {
-            confirmada: todasReservas.filter((r: any) => r.estado === 'confirmada').length,
-            cancelada: reservasCanceladas,
-            cerrada: reservasCerradas,
-            en_curso: todasReservas.filter((r: any) => r.estado === 'en_curso').length,
-            cerrada_con_incidencia: todasReservas.filter((r: any) => r.estado === 'cerrada_con_incidencia').length
-        };
+                        if (typeof aula === 'object' && aula._id) {
+                            aulaId = aula._id.toString();
+                            aulaNombre = aula.name || 'Sin nombre';
+                        } else if (typeof aula === 'string') {
+                            aulaId = aula;
+                            aulaNombre = 'Sin nombre';
+                        } else {
+                            return;
+                        }
 
-        // ===== PRÓXIMAS RESERVAS (SIGUIENTE SEMANA) =====
-        const proximaSemana = new Date();
-        proximaSemana.setDate(proximaSemana.getDate() + 7);
-        
-        const proximasReservas = todasReservas
-            .filter((r: any) => {
-                const fechaReserva = new Date(r.fecha);
-                return fechaReserva >= ahora && fechaReserva <= proximaSemana && 
-                       (r.estado === 'confirmada' || r.estado === 'en_curso');
-            })
-            .sort((a: any, b: any) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime())
-            .slice(0, 5)
-            .map((r: any) => ({
-                id: r._id,
-                nombre: r.nombre,
-                fecha: r.fecha,
-                horaInicio: r.horaInicio,
-                horaFin: r.horaFin,
-                tipo: r.tipo,
-                estado: r.estado,
-                aulas: r.aulas?.map((a: any) => a.name || 'Sin nombre') || []
-            }));
+                        if (!aulasContador[aulaId]) {
+                            aulasContador[aulaId] = { nombre: aulaNombre, count: 0 };
+                        }
+                        aulasContador[aulaId].count++;
+                    });
+                }
+            });
 
-        return {
-            stats,
-            chartData,
-            monthlyChartData,
-            aulasRanking,
-            equiposRanking,
-            reservasPorTipo,
-            reservasPorEstado,
-            proximasReservas
-        };
+            const aulasRanking = Object.entries(aulasContador)
+                .map(([id, data]: any) => ({ id, nombre: data.nombre, reservas: data.count }))
+                .sort((a, b) => b.reservas - a.reservas)
+                .slice(0, 5);
+
+            // ===== RANKING DE EQUIPOS MÁS RESERVADOS =====
+            const equiposContador: any = {};
+
+            todasReservas.forEach((r: any) => {
+                if (r.equipos && Array.isArray(r.equipos) && r.equipos.length > 0) {
+                    r.equipos.forEach((eq: any) => {
+                        if (!eq || !eq.equipo) return;
+
+                        let equipoId: string;
+                        let equipoNombre: string;
+
+                        if (typeof eq.equipo === 'object' && eq.equipo._id) {
+                            equipoId = eq.equipo._id.toString();
+                            equipoNombre = eq.equipo.name || eq.nombre || 'Sin nombre';
+                        } else if (typeof eq.equipo === 'string') {
+                            equipoId = eq.equipo;
+                            equipoNombre = eq.nombre || 'Sin nombre';
+                        } else {
+                            return;
+                        }
+
+                        const cantidad = eq.cantidad || 1;
+
+                        if (!equiposContador[equipoId]) {
+                            equiposContador[equipoId] = { nombre: equipoNombre, count: 0 };
+                        }
+                        equiposContador[equipoId].count += cantidad;
+                    });
+                }
+            });
+
+            const equiposRanking = Object.entries(equiposContador)
+                .map(([id, data]: any) => ({ id, nombre: data.nombre, reservas: data.count }))
+                .sort((a, b) => b.reservas - a.reservas)
+                .slice(0, 5);
+
+            // ===== DISTRIBUCIÓN POR TIPO =====
+            const reservasPorTipo = {
+                aula: todasReservas.filter((r: any) => r.tipo === 'aula').length,
+                equipo: todasReservas.filter((r: any) => r.tipo === 'equipo').length
+            };
+
+            // ===== DISTRIBUCIÓN POR ESTADO =====
+            const reservasPorEstado = {
+                confirmada: todasReservas.filter((r: any) => r.estado === 'confirmada').length,
+                cancelada: reservasCanceladas,
+                cerrada: reservasCerradas,
+                en_curso: todasReservas.filter((r: any) => r.estado === 'en_curso').length,
+                cerrada_con_incidencia: todasReservas.filter((r: any) => r.estado === 'cerrada_con_incidencia').length
+            };
+
+            // ===== PRÓXIMAS RESERVAS (SIGUIENTE SEMANA) =====
+            const proximaSemana = new Date();
+            proximaSemana.setDate(proximaSemana.getDate() + 7);
+
+            const proximasReservas = todasReservas
+                .filter((r: any) => {
+                    const fechaReserva = new Date(r.fecha);
+                    return fechaReserva >= ahora && fechaReserva <= proximaSemana &&
+                        (r.estado === 'confirmada' || r.estado === 'en_curso');
+                })
+                .sort((a: any, b: any) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime())
+                .slice(0, 5)
+                .map((r: any) => ({
+                    id: r._id,
+                    nombre: r.nombre,
+                    fecha: r.fecha,
+                    horaInicio: r.horaInicio,
+                    horaFin: r.horaFin,
+                    tipo: r.tipo,
+                    estado: r.estado,
+                    aulas: r.aulas?.map((a: any) => a.name || 'Sin nombre') || []
+                }));
+
+            return {
+                stats,
+                chartData,
+                monthlyChartData,
+                aulasRanking,
+                equiposRanking,
+                reservasPorTipo,
+                reservasPorEstado,
+                proximasReservas
+            };
         } catch (error) {
             console.error('Error en getDashboardStats:', error);
             throw new HttpException(
@@ -1611,7 +1627,7 @@ export class ReservasService {
             const writeResult = await workbook.xlsx.writeBuffer();
             const buffer = Buffer.isBuffer(writeResult)
                 ? writeResult
-                : Buffer.from(writeResult); 
+                : Buffer.from(writeResult);
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
             const fileName = `reporte_reservas_${timestamp}.xlsx`;
 
