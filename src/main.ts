@@ -15,7 +15,7 @@ async function bootstrap() {
 
   // Configurar cors PROD
   app.enableCors({ 
-    origin: ['https://utpreservas.netlify.app', 'https://utpreservasadmin.netlify.app'] 
+    origin: ['https://reservaslabutp.site', 'https://intranet.reservaslabutp.site'] 
   });
   await app.listen(process.env.PORT ?? 3000);
 
