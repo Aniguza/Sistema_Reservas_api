@@ -6,4 +6,5 @@ export class CreateAulasDTO {
     readonly createdAt: Date;
     readonly disponibilidad: 'disponible' | 'ocupada' | 'en mantenimiento';
     readonly equipos: string[];
+    readonly occupiedRanges?: { start: Date; end: Date; reason?: string }[];
 }

@@ -823,6 +823,42 @@ export class ReservasService {
 
         const reservasExistentes = await this.reservaModel.find(query).exec();
 
+        // Verificar franjas ocupadas definidas en el documento de Aula
+        if (aulasIds.length > 0) {
+            const aulasDocs: any[] = await this.aulaModel
+                .find({ _id: { $in: aulasIds } })
+                .select('occupiedRanges')
+                .lean()
+                .exec();
+
+            const startReserva = new Date(fecha);
+            const [hi, mi] = (horaInicio || '00:00').split(':').map(Number);
+            startReserva.setHours(isNaN(hi) ? 0 : hi, isNaN(mi) ? 0 : mi, 0, 0);
+            const endReserva = new Date(fecha);
+            const [hf, mf] = (horaFin || '00:00').split(':').map(Number);
+            endReserva.setHours(isNaN(hf) ? 0 : hf, isNaN(mf) ? 0 : mf, 0, 0);
+
+            const overlaps = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) => {
+                return aStart < bEnd && bStart < aEnd;
+            };
+
+            for (const aulaDoc of aulasDocs) {
+                if (aulaDoc && Array.isArray(aulaDoc.occupiedRanges) && aulaDoc.occupiedRanges.length > 0) {
+                    for (const r of aulaDoc.occupiedRanges) {
+                        try {
+                            const rStart = new Date(r.start);
+                            const rEnd = new Date(r.end);
+                            if (overlaps(startReserva, endReserva, rStart, rEnd)) {
+                                return false;
+                            }
+                        } catch (err) {
+                            // Ignorar franjas inválidas
+                        }
+                    }
+                }
+            }
+        }
+
         // Verificar conflictos de horario por aula (si hay alguna reserva que se solape)
         // Aplicar buffer de 60 minutos entre reservas del mismo aula
         for (const reserva of reservasExistentes) {
@@ -915,7 +951,7 @@ export class ReservasService {
 
         if (inicioMin < limiteInicio || finMin > limiteFin || inicioMin >= finMin) {
             throw new HttpException(
-                'Las reservas solo se permiten entre 09:00 y 21:00 y la hora de inicio debe ser anterior a la de fin',
+                'Las reservas solo se permiten entre 9:00am a 9:00pm.',
                 HttpStatus.BAD_REQUEST,
             );
         }

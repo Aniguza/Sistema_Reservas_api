@@ -12,5 +12,10 @@ export const aulasSchema = new Schema({
     required: false, 
     default: 'disponible' 
   },
+  occupiedRanges: [{
+    start: { type: Date, required: true },
+    end: { type: Date, required: true },
+    reason: { type: String, required: false },
+  }],
   equipos: [{ type: Schema.Types.ObjectId, ref: 'Equipo', required: false }],
 });
