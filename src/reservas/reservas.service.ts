@@ -8,6 +8,7 @@ import { MailService } from '../mail/mail.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
 import { Workbook } from 'exceljs';
+import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 
 @Injectable()
 export class ReservasService {
@@ -239,7 +240,10 @@ export class ReservasService {
                 'Las reservas deben realizarse con al menos 2 días de anticipación',
                 HttpStatus.BAD_REQUEST,
             );
-        } 
+        }
+
+        // Validar que la fecha sea de lunes a viernes
+        this.validarDiaPermitido(fechaReserva);
 
         let aulasIds: string[] = [];
 
@@ -300,7 +304,7 @@ export class ReservasService {
             // ===== VALIDACIÓN CRÍTICA: Todos los equipos deben pertenecer a LA MISMA AULA =====
             // Verificar que todos los equipos pertenezcan a una única aula
             const aulasUnicas = new Set<string>();
-            
+
             for (const aulaDoc of aulas) {
                 const aula: any = aulaDoc;
                 // Verificar si esta aula contiene alguno de los equipos seleccionados
@@ -325,7 +329,7 @@ export class ReservasService {
             // Verificar que TODOS los equipos seleccionados estén en el aula encontrada
             const aulaFinal: any = aulas[0];
             const equiposEnAula = aulaFinal.equipos.map((e: any) => e._id.toString());
-            
+
             const todosLosEquiposEnAula = equiposIds.every((equipoId: string) =>
                 equiposEnAula.includes(equipoId)
             );
@@ -357,44 +361,12 @@ export class ReservasService {
             codigoAulaSeleccionada = aulaEncontrada.codigo;
         }
 
-        // ===== VALIDACIÓN: Verificar que pase al menos 1 día completo desde cualquier reserva cercana =====
-        // Si reservan el lunes (día 1), pueden reservar el miércoles (día 3), dejando el martes libre
-        
-        // Buscar reservas cercanas (1 día antes o 1 día después)
-        const unDiaAntes = new Date(fechaReserva);
-        unDiaAntes.setDate(fechaReserva.getDate() - 2);
-        
-        const unDiaDespues = new Date(fechaReserva);
-        unDiaDespues.setDate(fechaReserva.getDate() + 2);
-
-        const reservasCercanas = await this.reservaModel
-            .find({
-                aulas: { $in: aulasIds },
-                estado: { $in: ['pendiente', 'confirmada'] },
-                fecha: {
-                    $gte: unDiaAntes,
-                    $lt: unDiaDespues
-                }
-            })
-            .exec();
-
-        // Verificar que no haya reservas en el día anterior o siguiente (debe haber 1 día libre)
-        for (const reservaCercana of reservasCercanas) {
-            const fechaReservaCercana = new Date(reservaCercana.fecha);
-            fechaReservaCercana.setHours(0, 0, 0, 0);
-            
-            const diferenciaDias = Math.abs(Math.floor((fechaReserva.getTime() - fechaReservaCercana.getTime()) / (1000 * 60 * 60 * 24)));
-
-            // Si la diferencia es 0 (mismo día) o 1 (día consecutivo), rechazar
-            if (diferenciaDias < 2) {
-                throw new HttpException(
-                    `El aula tiene una reserva el ${fechaReservaCercana.toLocaleDateString('es-PE')}. Debe dejar al menos 1 día libre entre reservas.`,
-                    HttpStatus.BAD_REQUEST,
-                );
-            }
-        }
+        // Nota: se permite reservar el mismo día siempre que no haya solapamiento.
+        // La restricción de "dejar 1 día libre" fue eliminada para permitir reservas el mismo día.
 
         // Validar disponibilidad en el horario específico (incluye cantidades por equipo)
+        // Validar que el horario esté dentro del rango permitido (09:00-21:00)
+        this.validarHorarioPermitido(horaInicio, horaFin);
         const disponible = await this.checkDisponibilidad(
             aulasIds,
             equipos || [],
@@ -621,7 +593,12 @@ export class ReservasService {
             );
         }
 
+        // Validar que la nueva fecha sea de lunes a viernes
+        this.validarDiaPermitido(nuevaFecha);
+
         // Validar disponibilidad en la nueva fecha/hora (excluyendo esta reserva)
+        // Validar que el horario esté dentro del rango permitido (09:00-21:00)
+        this.validarHorarioPermitido(horaInicio, horaFin);
         const disponible = await this.checkDisponibilidad(
             reserva.aulas || [],
             reserva.equipos || [],
@@ -694,7 +671,7 @@ export class ReservasService {
 
     // Cancelar reserva (solo admin o el mismo usuario)
     async cancelarReserva(
-        id: string, 
+        id: string,
         isAdmin: boolean = false,
         motivoCancelacion?: string,
         correoUsuario?: string
@@ -725,7 +702,7 @@ export class ReservasService {
         // Verificar que la reserva sea futura
         const ahora = new Date();
         const fechaReserva = new Date(reserva.fecha);
-        
+
         if (fechaReserva < ahora) {
             throw new HttpException(
                 'No se puede cancelar una reserva pasada',
@@ -847,9 +824,46 @@ export class ReservasService {
 
         const reservasExistentes = await this.reservaModel.find(query).exec();
 
+        // Verificar franjas ocupadas definidas en el documento de Aula
+        if (aulasIds.length > 0) {
+            const aulasDocs: any[] = await this.aulaModel
+                .find({ _id: { $in: aulasIds } })
+                .select('occupiedRanges')
+                .lean()
+                .exec();
+
+            const startReserva = new Date(fecha);
+            const [hi, mi] = (horaInicio || '00:00').split(':').map(Number);
+            startReserva.setHours(isNaN(hi) ? 0 : hi, isNaN(mi) ? 0 : mi, 0, 0);
+            const endReserva = new Date(fecha);
+            const [hf, mf] = (horaFin || '00:00').split(':').map(Number);
+            endReserva.setHours(isNaN(hf) ? 0 : hf, isNaN(mf) ? 0 : mf, 0, 0);
+
+            const overlaps = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) => {
+                return aStart < bEnd && bStart < aEnd;
+            };
+
+            for (const aulaDoc of aulasDocs) {
+                if (aulaDoc && Array.isArray(aulaDoc.occupiedRanges) && aulaDoc.occupiedRanges.length > 0) {
+                    for (const r of aulaDoc.occupiedRanges) {
+                        try {
+                            const rStart = new Date(r.start);
+                            const rEnd = new Date(r.end);
+                            if (overlaps(startReserva, endReserva, rStart, rEnd)) {
+                                return false;
+                            }
+                        } catch (err) {
+                            // Ignorar franjas inválidas
+                        }
+                    }
+                }
+            }
+        }
+
         // Verificar conflictos de horario por aula (si hay alguna reserva que se solape)
+        // Aplicar buffer de 60 minutos entre reservas del mismo aula
         for (const reserva of reservasExistentes) {
-            if (this.hayConflictoHorario(horaInicio, horaFin, reserva.horaInicio, reserva.horaFin)) {
+            if (this.hayConflictoHorario(horaInicio, horaFin, reserva.horaInicio, reserva.horaFin, 60)) {
                 // Si la reserva existente afecta a aulas solicitadas -> no disponible
                 if (aulasIds.length > 0 && reserva.aulas && reserva.aulas.some((a: any) => aulasIds.includes(a.toString()))) {
                     return false;
@@ -903,11 +917,12 @@ export class ReservasService {
         fin1: string,
         inicio2: string,
         fin2: string,
+        bufferMinutes: number = 0,
     ): boolean {
         // Convertir a minutos desde medianoche para comparar
         const toMinutes = (hora: string): number => {
             const [h, m] = hora.split(':').map(Number);
-            return h * 60 + m;
+            return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
         };
 
         const inicio1Min = toMinutes(inicio1);
@@ -915,8 +930,46 @@ export class ReservasService {
         const inicio2Min = toMinutes(inicio2);
         const fin2Min = toMinutes(fin2);
 
-        // Hay conflicto si los rangos se solapan
-        return !(fin1Min <= inicio2Min || inicio1Min >= fin2Min);
+        const buffer = Math.max(0, Math.floor(bufferMinutes));
+
+        // Considerar buffer (en minutos) alrededor de la reserva existente:
+        // No hay conflicto si fin1 <= inicio2 - buffer OR inicio1 >= fin2 + buffer
+        return !(fin1Min <= (inicio2Min - buffer) || inicio1Min >= (fin2Min + buffer));
+    }
+
+    // Validar que el horario esté dentro del rango permitido (09:00 - 21:00)
+    private validarHorarioPermitido(horaInicio: string, horaFin: string): void {
+        const toMinutes = (hora: string): number => {
+            const [h, m] = hora.split(':').map(Number);
+            return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
+        };
+
+        const inicioMin = toMinutes(horaInicio);
+        const finMin = toMinutes(horaFin);
+
+        const limiteInicio = 9 * 60; // 09:00
+        const limiteFin = 21 * 60; // 21:00
+
+        if (inicioMin < limiteInicio || finMin > limiteFin || inicioMin >= finMin) {
+            throw new HttpException(
+                'Las reservas solo se permiten entre 9:00am a 9:00pm.',
+                HttpStatus.BAD_REQUEST,
+            );
+        }
+    }
+
+    // Validar que la fecha sea de lunes a viernes
+    private validarDiaPermitido(fecha: Date): void {
+        const dia = new Date(fecha);
+        dia.setHours(0, 0, 0, 0);
+        const diaSemana = dia.getDay(); // 0 = domingo, 6 = sábado
+
+        if (diaSemana === 0 || diaSemana === 6) {
+            throw new HttpException(
+                'Solo puedes reservar de lunes a viernes',
+                HttpStatus.BAD_REQUEST,
+            );
+        }
     }
 
     // ===== GESTIÓN DE INCIDENCIAS =====
@@ -1212,15 +1265,45 @@ export class ReservasService {
     }
 
     // ===== DASHBOARD STATS - ENDPOINT OPTIMIZADO =====
-    
+
     // Obtener estadísticas agregadas para el dashboard en una sola llamada
-    async getDashboardStats(): Promise<any> {
+    async getDashboardStats(filtros?: {
+        fechaInicio?: Date;
+        fechaFin?: Date;
+    }): Promise<any> {
         try {
             const ahora = new Date();
-            const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
-            const finMes = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0);
+            
+            // Determinar rango de fechas
+            let fechaInicio: Date;
+            let fechaFin: Date;
+            
+            if (filtros?.fechaInicio && filtros?.fechaFin) {
+                // Usar fechas proporcionadas
+                fechaInicio = new Date(filtros.fechaInicio);
+                fechaInicio.setHours(0, 0, 0, 0);
+                fechaFin = new Date(filtros.fechaFin);
+                fechaFin.setHours(23, 59, 59, 999);
+            } else {
+                // Por defecto: último mes
+                fechaInicio = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
+                fechaFin = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0);
+                fechaFin.setHours(23, 59, 59, 999);
+            }
 
-            // Obtener todas las reservas en paralelo
+            // Construir query para filtrar reservas por fecha
+            const queryReservas: any = {};
+            if (filtros?.fechaInicio || filtros?.fechaFin) {
+                queryReservas.fecha = {};
+                if (fechaInicio) {
+                    queryReservas.fecha.$gte = fechaInicio;
+                }
+                if (fechaFin) {
+                    queryReservas.fecha.$lte = fechaFin;
+                }
+            }
+
+            // Obtener todas las reservas en paralelo (filtradas por fecha si se proporciona)
             const [
                 todasReservas,
                 reservasMes,
@@ -1228,11 +1311,13 @@ export class ReservasService {
                 aulasData,
                 equiposData
             ] = await Promise.all([
-                this.reservaModel.find().populate('aulas', 'name').populate('equipos.equipo', 'name').exec(),
+                this.reservaModel.find(queryReservas).populate('aulas', 'name codigo').populate('equipos.equipo', 'name').exec(),
                 this.reservaModel.find({
-                    fecha: { $gte: inicioMes, $lte: finMes }
+                    ...queryReservas,
+                    fecha: { $gte: fechaInicio, $lte: fechaFin }
                 }).exec(),
                 this.reservaModel.find({
+                    ...queryReservas,
                     'incidencias.0': { $exists: true },
                     'incidencias.estado': { $in: ['reportada', 'en_revision', 'en_proceso'] }
                 }).exec(),
@@ -1240,207 +1325,276 @@ export class ReservasService {
                 this.equipoModel.find().exec()
             ]);
 
-        // ===== ESTADÍSTICAS GENERALES =====
-        const totalReservas = todasReservas.length;
-        const reservasActivas = todasReservas.filter((r: any) => 
-            r.estado === 'confirmada' || r.estado === 'en_curso'
-        ).length;
-        const reservasCanceladas = todasReservas.filter((r: any) => r.estado === 'cancelada').length;
-        const reservasCerradas = todasReservas.filter((r: any) => 
-            r.estado === 'cerrada' || r.estado === 'cerrada_con_incidencia'
-        ).length;
+            // ===== ESTADÍSTICAS GENERALES =====
+            const totalReservas = todasReservas.length;
+            const reservasActivas = todasReservas.filter((r: any) =>
+                r.estado === 'confirmada' || r.estado === 'en_curso'
+            ).length;
+            const reservasCanceladas = todasReservas.filter((r: any) => r.estado === 'cancelada').length;
+            const reservasCerradas = todasReservas.filter((r: any) =>
+                r.estado === 'cerrada' || r.estado === 'cerrada_con_incidencia'
+            ).length;
 
-        // Contar incidencias abiertas
-        let totalIncidenciasAbiertas = 0;
-        incidenciasAbiertas.forEach((r: any) => {
-            if (r.incidencias && r.incidencias.length > 0) {
-                totalIncidenciasAbiertas += r.incidencias.filter((inc: any) => 
-                    ['reportada', 'en_revision', 'en_proceso'].includes(inc.estado)
-                ).length;
+            // Contar incidencias abiertas
+            let totalIncidenciasAbiertas = 0;
+            incidenciasAbiertas.forEach((r: any) => {
+                if (r.incidencias && r.incidencias.length > 0) {
+                    totalIncidenciasAbiertas += r.incidencias.filter((inc: any) =>
+                        ['reportada', 'en_revision', 'en_proceso'].includes(inc.estado)
+                    ).length;
+                }
+            });
+
+            const stats = {
+                totalReservas,
+                reservasActivas,
+                reservasCanceladas,
+                reservasCerradas,
+                incidenciasAbiertas: totalIncidenciasAbiertas,
+                totalAulas: aulasData.length,
+                totalEquipos: equiposData.length
+            };
+
+            // ===== DATOS PARA GRÁFICAS POR DÍA/SEMANA =====
+            const ultimosSieteDias: string[] = [];
+            const reservasPorDia: number[] = [];
+
+            // Calcular días a mostrar según el rango
+            const diasDiferencia = Math.ceil((fechaFin.getTime() - fechaInicio.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
+            // Si el rango es menor o igual a 30 días, mostrar por día
+            if (diasDiferencia <= 30) {
+                const fechaActual = new Date(fechaInicio);
+                while (fechaActual <= fechaFin) {
+                    const fechaDiaInicio = new Date(fechaActual);
+                    fechaDiaInicio.setHours(0, 0, 0, 0);
+                    const fechaDiaFin = new Date(fechaActual);
+                    fechaDiaFin.setHours(23, 59, 59, 999);
+
+                    const reservasDia = todasReservas.filter((r: any) => {
+                        const fechaReserva = new Date(r.fecha);
+                        return fechaReserva >= fechaDiaInicio && fechaReserva <= fechaDiaFin;
+                    }).length;
+
+                    const dias = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+                    const label = `${dias[fechaActual.getDay()]} ${fechaActual.getDate()}/${fechaActual.getMonth() + 1}`;
+                    ultimosSieteDias.push(label);
+                    reservasPorDia.push(reservasDia);
+
+                    fechaActual.setDate(fechaActual.getDate() + 1);
+                }
+            } else {
+                // Si el rango es mayor a 30 días, mostrar por semana con formato "Semana del X al Y"
+                const fechaActual = new Date(fechaInicio);
+                while (fechaActual <= fechaFin) {
+                    const fechaSemanaInicio = new Date(fechaActual);
+                    fechaSemanaInicio.setHours(0, 0, 0, 0);
+                    const fechaSemanaFin = new Date(fechaActual);
+                    fechaSemanaFin.setDate(fechaSemanaFin.getDate() + 6);
+                    fechaSemanaFin.setHours(23, 59, 59, 999);
+
+                    // Ajustar si la semana se sale del rango
+                    if (fechaSemanaFin > fechaFin) {
+                        fechaSemanaFin.setTime(fechaFin.getTime());
+                    }
+
+                    const reservasSemana = todasReservas.filter((r: any) => {
+                        const fechaReserva = new Date(r.fecha);
+                        return fechaReserva >= fechaSemanaInicio && fechaReserva <= fechaSemanaFin;
+                    }).length;
+
+                    // Formato: "Semana del DD/MM al DD/MM"
+                    const inicioStr = fechaSemanaInicio.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' });
+                    const finStr = fechaSemanaFin.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' });
+                    const label = `Semana del ${inicioStr} al ${finStr}`;
+                    ultimosSieteDias.push(label);
+                    reservasPorDia.push(reservasSemana);
+
+                    fechaActual.setDate(fechaActual.getDate() + 7);
+                }
             }
-        });
 
-        const stats = {
-            totalReservas,
-            reservasActivas,
-            reservasCanceladas,
-            reservasCerradas,
-            incidenciasAbiertas: totalIncidenciasAbiertas,
-            totalAulas: aulasData.length,
-            totalEquipos: equiposData.length
-        };
+            const chartData = {
+                labels: ultimosSieteDias,
+                data: reservasPorDia
+            };
 
-        // ===== DATOS PARA GRÁFICAS (ÚLTIMOS 7 DÍAS) =====
-        const ultimosSieteDias: string[] = [];
-        const reservasPorDia: number[] = [];
-        
-        for (let i = 6; i >= 0; i--) {
-            const fecha = new Date();
-            fecha.setDate(fecha.getDate() - i);
-            fecha.setHours(0, 0, 0, 0);
+            // ===== RESERVAS POR MES =====
+            const reservasPorMes: number[] = [];
+            const labelsMeses: string[] = [];
+
+            // Calcular meses en el rango
+            const fechaActual = new Date(fechaInicio);
+            fechaActual.setDate(1); // Primer día del mes
             
-            const fechaFin = new Date(fecha);
-            fechaFin.setHours(23, 59, 59, 999);
-            
-            const reservasDia = todasReservas.filter((r: any) => {
-                const fechaReserva = new Date(r.fecha);
-                return fechaReserva >= fecha && fechaReserva <= fechaFin;
-            }).length;
-            
-            const dias = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
-            const label = `${dias[fecha.getDay()]} ${fecha.getDate()}`;
-            ultimosSieteDias.push(label);
-            reservasPorDia.push(reservasDia);
-        }
+            while (fechaActual <= fechaFin) {
+                const mesInicio = new Date(fechaActual.getFullYear(), fechaActual.getMonth(), 1);
+                const mesFin = new Date(fechaActual.getFullYear(), fechaActual.getMonth() + 1, 0);
+                mesFin.setHours(23, 59, 59, 999);
 
-        const chartData = {
-            labels: ultimosSieteDias,
-            data: reservasPorDia
-        };
+                // Ajustar límites al rango proporcionado
+                const mesInicioAjustado = mesInicio < fechaInicio ? fechaInicio : mesInicio;
+                const mesFinAjustado = mesFin > fechaFin ? fechaFin : mesFin;
 
-        // ===== RESERVAS POR MES (ÚLTIMOS 6 MESES) =====
-        const reservasPorMes: number[] = [];
-        const labelsMeses: string[] = [];
-        
-        for (let i = 5; i >= 0; i--) {
-            const fecha = new Date();
-            fecha.setMonth(fecha.getMonth() - i);
-            const mesInicio = new Date(fecha.getFullYear(), fecha.getMonth(), 1);
-            const mesFin = new Date(fecha.getFullYear(), fecha.getMonth() + 1, 0);
-            
-            const reservasMes = todasReservas.filter((r: any) => {
-                const fechaReserva = new Date(r.fecha);
-                return fechaReserva >= mesInicio && fechaReserva <= mesFin;
-            }).length;
-            
-            const meses = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-            labelsMeses.push(meses[mesInicio.getMonth()]);
-            reservasPorMes.push(reservasMes);
-        }
+                const reservasMes = todasReservas.filter((r: any) => {
+                    const fechaReserva = new Date(r.fecha);
+                    return fechaReserva >= mesInicioAjustado && fechaReserva <= mesFinAjustado;
+                }).length;
 
-        const monthlyChartData = {
-            labels: labelsMeses,
-            data: reservasPorMes
-        };
+                const meses = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+                labelsMeses.push(`${meses[mesInicio.getMonth()]} ${mesInicio.getFullYear()}`);
+                reservasPorMes.push(reservasMes);
 
-        // ===== RANKING DE AULAS MÁS RESERVADAS =====
-        const aulasContador: any = {};
-        
-        todasReservas.forEach((r: any) => {
-            if (r.aulas && Array.isArray(r.aulas) && r.aulas.length > 0) {
-                r.aulas.forEach((aula: any) => {
-                    if (!aula) return;
-                    
-                    let aulaId: string;
-                    let aulaNombre: string;
-                    
-                    if (typeof aula === 'object' && aula._id) {
-                        aulaId = aula._id.toString();
-                        aulaNombre = aula.name || 'Sin nombre';
-                    } else if (typeof aula === 'string') {
-                        aulaId = aula;
-                        aulaNombre = 'Sin nombre';
-                    } else {
-                        return;
+                // Avanzar al siguiente mes
+                fechaActual.setMonth(fechaActual.getMonth() + 1);
+            }
+
+            const monthlyChartData = {
+                labels: labelsMeses,
+                data: reservasPorMes
+            };
+
+            // ===== RANKING DE AULAS MÁS RESERVADAS =====
+            const aulasContador: any = {};
+            const aulasIdsParaBuscar = new Set<string>();
+
+            // Primero, recopilar todos los IDs de aulas y contar
+            todasReservas.forEach((r: any) => {
+                if (r.aulas && Array.isArray(r.aulas) && r.aulas.length > 0) {
+                    r.aulas.forEach((aula: any) => {
+                        if (!aula) return;
+
+                        let aulaId: string;
+                        let aulaNombre: string | null = null;
+
+                        if (typeof aula === 'object' && aula._id) {
+                            aulaId = aula._id.toString();
+                            aulaNombre = aula.name || aula.codigo || null;
+                        } else if (typeof aula === 'string') {
+                            aulaId = aula;
+                            aulasIdsParaBuscar.add(aulaId);
+                        } else {
+                            return;
+                        }
+
+                        if (!aulasContador[aulaId]) {
+                            aulasContador[aulaId] = { nombre: aulaNombre, count: 0 };
+                        }
+                        aulasContador[aulaId].count++;
+                    });
+                }
+            });
+
+            // Si hay aulas sin nombre (solo IDs), buscarlas en la base de datos
+            if (aulasIdsParaBuscar.size > 0) {
+                const aulasEncontradas = await this.aulaModel.find({
+                    _id: { $in: Array.from(aulasIdsParaBuscar) }
+                }).select('name codigo').lean().exec();
+
+                aulasEncontradas.forEach((aula: any) => {
+                    const aulaId = aula._id.toString();
+                    if (aulasContador[aulaId] && !aulasContador[aulaId].nombre) {
+                        aulasContador[aulaId].nombre = aula.name || aula.codigo || 'Sin nombre';
                     }
-                    
-                    if (!aulasContador[aulaId]) {
-                        aulasContador[aulaId] = { nombre: aulaNombre, count: 0 };
-                    }
-                    aulasContador[aulaId].count++;
                 });
             }
-        });
 
-        const aulasRanking = Object.entries(aulasContador)
-            .map(([id, data]: any) => ({ id, nombre: data.nombre, reservas: data.count }))
-            .sort((a, b) => b.reservas - a.reservas)
-            .slice(0, 5);
+            // Asegurar que todas las aulas tengan nombre
+            Object.keys(aulasContador).forEach(aulaId => {
+                if (!aulasContador[aulaId].nombre) {
+                    aulasContador[aulaId].nombre = 'Sin nombre';
+                }
+            });
 
-        // ===== RANKING DE EQUIPOS MÁS RESERVADOS =====
-        const equiposContador: any = {};
-        
-        todasReservas.forEach((r: any) => {
-            if (r.equipos && Array.isArray(r.equipos) && r.equipos.length > 0) {
-                r.equipos.forEach((eq: any) => {
-                    if (!eq || !eq.equipo) return;
-                    
-                    let equipoId: string;
-                    let equipoNombre: string;
-                    
-                    if (typeof eq.equipo === 'object' && eq.equipo._id) {
-                        equipoId = eq.equipo._id.toString();
-                        equipoNombre = eq.equipo.name || eq.nombre || 'Sin nombre';
-                    } else if (typeof eq.equipo === 'string') {
-                        equipoId = eq.equipo;
-                        equipoNombre = eq.nombre || 'Sin nombre';
-                    } else {
-                        return;
-                    }
-                    
-                    const cantidad = eq.cantidad || 1;
-                    
-                    if (!equiposContador[equipoId]) {
-                        equiposContador[equipoId] = { nombre: equipoNombre, count: 0 };
-                    }
-                    equiposContador[equipoId].count += cantidad;
-                });
-            }
-        });
+            const aulasRanking = Object.entries(aulasContador)
+                .map(([id, data]: any) => ({ id, nombre: data.nombre, reservas: data.count }))
+                .sort((a, b) => b.reservas - a.reservas)
+                .slice(0, 5);
 
-        const equiposRanking = Object.entries(equiposContador)
-            .map(([id, data]: any) => ({ id, nombre: data.nombre, reservas: data.count }))
-            .sort((a, b) => b.reservas - a.reservas)
-            .slice(0, 5);
+            // ===== RANKING DE EQUIPOS MÁS RESERVADOS =====
+            const equiposContador: any = {};
 
-        // ===== DISTRIBUCIÓN POR TIPO =====
-        const reservasPorTipo = {
-            aula: todasReservas.filter((r: any) => r.tipo === 'aula').length,
-            equipo: todasReservas.filter((r: any) => r.tipo === 'equipo').length
-        };
+            todasReservas.forEach((r: any) => {
+                if (r.equipos && Array.isArray(r.equipos) && r.equipos.length > 0) {
+                    r.equipos.forEach((eq: any) => {
+                        if (!eq || !eq.equipo) return;
 
-        // ===== DISTRIBUCIÓN POR ESTADO =====
-        const reservasPorEstado = {
-            confirmada: todasReservas.filter((r: any) => r.estado === 'confirmada').length,
-            cancelada: reservasCanceladas,
-            cerrada: reservasCerradas,
-            en_curso: todasReservas.filter((r: any) => r.estado === 'en_curso').length,
-            cerrada_con_incidencia: todasReservas.filter((r: any) => r.estado === 'cerrada_con_incidencia').length
-        };
+                        let equipoId: string;
+                        let equipoNombre: string;
 
-        // ===== PRÓXIMAS RESERVAS (SIGUIENTE SEMANA) =====
-        const proximaSemana = new Date();
-        proximaSemana.setDate(proximaSemana.getDate() + 7);
-        
-        const proximasReservas = todasReservas
-            .filter((r: any) => {
-                const fechaReserva = new Date(r.fecha);
-                return fechaReserva >= ahora && fechaReserva <= proximaSemana && 
-                       (r.estado === 'confirmada' || r.estado === 'en_curso');
-            })
-            .sort((a: any, b: any) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime())
-            .slice(0, 5)
-            .map((r: any) => ({
-                id: r._id,
-                nombre: r.nombre,
-                fecha: r.fecha,
-                horaInicio: r.horaInicio,
-                horaFin: r.horaFin,
-                tipo: r.tipo,
-                estado: r.estado,
-                aulas: r.aulas?.map((a: any) => a.name || 'Sin nombre') || []
-            }));
+                        if (typeof eq.equipo === 'object' && eq.equipo._id) {
+                            equipoId = eq.equipo._id.toString();
+                            equipoNombre = eq.equipo.name || eq.nombre || 'Sin nombre';
+                        } else if (typeof eq.equipo === 'string') {
+                            equipoId = eq.equipo;
+                            equipoNombre = eq.nombre || 'Sin nombre';
+                        } else {
+                            return;
+                        }
 
-        return {
-            stats,
-            chartData,
-            monthlyChartData,
-            aulasRanking,
-            equiposRanking,
-            reservasPorTipo,
-            reservasPorEstado,
-            proximasReservas
-        };
+                        const cantidad = eq.cantidad || 1;
+
+                        if (!equiposContador[equipoId]) {
+                            equiposContador[equipoId] = { nombre: equipoNombre, count: 0 };
+                        }
+                        equiposContador[equipoId].count += cantidad;
+                    });
+                }
+            });
+
+            const equiposRanking = Object.entries(equiposContador)
+                .map(([id, data]: any) => ({ id, nombre: data.nombre, reservas: data.count }))
+                .sort((a, b) => b.reservas - a.reservas)
+                .slice(0, 5);
+
+            // ===== DISTRIBUCIÓN POR TIPO =====
+            const reservasPorTipo = {
+                aula: todasReservas.filter((r: any) => r.tipo === 'aula').length,
+                equipo: todasReservas.filter((r: any) => r.tipo === 'equipo').length
+            };
+
+            // ===== DISTRIBUCIÓN POR ESTADO =====
+            const reservasPorEstado = {
+                confirmada: todasReservas.filter((r: any) => r.estado === 'confirmada').length,
+                cancelada: reservasCanceladas,
+                cerrada: reservasCerradas,
+                en_curso: todasReservas.filter((r: any) => r.estado === 'en_curso').length,
+                cerrada_con_incidencia: todasReservas.filter((r: any) => r.estado === 'cerrada_con_incidencia').length
+            };
+
+            // ===== PRÓXIMAS RESERVAS (SIGUIENTE SEMANA) =====
+            const proximaSemana = new Date();
+            proximaSemana.setDate(proximaSemana.getDate() + 7);
+
+            const proximasReservas = todasReservas
+                .filter((r: any) => {
+                    const fechaReserva = new Date(r.fecha);
+                    return fechaReserva >= ahora && fechaReserva <= proximaSemana &&
+                        (r.estado === 'confirmada' || r.estado === 'en_curso');
+                })
+                .sort((a: any, b: any) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime())
+                .slice(0, 5)
+                .map((r: any) => ({
+                    id: r._id,
+                    nombre: r.nombre,
+                    fecha: r.fecha,
+                    horaInicio: r.horaInicio,
+                    horaFin: r.horaFin,
+                    tipo: r.tipo,
+                    estado: r.estado,
+                    aulas: r.aulas?.map((a: any) => a.name || 'Sin nombre') || []
+                }));
+
+            return {
+                stats,
+                chartData,
+                monthlyChartData,
+                aulasRanking,
+                equiposRanking,
+                reservasPorTipo,
+                reservasPorEstado,
+                proximasReservas
+            };
         } catch (error) {
             console.error('Error en getDashboardStats:', error);
             throw new HttpException(
@@ -1611,7 +1765,7 @@ export class ReservasService {
             const writeResult = await workbook.xlsx.writeBuffer();
             const buffer = Buffer.isBuffer(writeResult)
                 ? writeResult
-                : Buffer.from(writeResult); 
+                : Buffer.from(writeResult);
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
             const fileName = `reporte_reservas_${timestamp}.xlsx`;
 
@@ -1620,6 +1774,505 @@ export class ReservasService {
             this.logger.error('Error al generar reporte de reservas', error as Error);
             throw new HttpException(
                 'No se pudo generar el reporte de reservas',
+                HttpStatus.INTERNAL_SERVER_ERROR,
+            );
+        }
+    }
+
+    // ===== EXPORTAR DASHBOARD CON GRÁFICOS =====
+    async exportDashboardToExcel(filtros?: {
+        fechaInicio?: string;
+        fechaFin?: string;
+    }): Promise<{ buffer: Buffer; fileName: string }> {
+        try {
+            // Convertir fechas de string a Date si se proporcionan
+            let fechaInicioDate: Date | undefined;
+            let fechaFinDate: Date | undefined;
+
+            if (filtros?.fechaInicio) {
+                fechaInicioDate = new Date(filtros.fechaInicio);
+            }
+            if (filtros?.fechaFin) {
+                fechaFinDate = new Date(filtros.fechaFin);
+            }
+
+            // Obtener estadísticas del dashboard con filtros
+            const dashboardData = await this.getDashboardStats({
+                fechaInicio: fechaInicioDate,
+                fechaFin: fechaFinDate,
+            });
+
+            // Configurar ChartJS para generar imágenes
+            const chartJSNodeCanvas = new ChartJSNodeCanvas({
+                width: 800,
+                height: 400,
+                backgroundColour: 'white',
+            });
+
+            const workbook = new Workbook();
+            workbook.creator = 'Sistema de Reservas';
+            workbook.created = new Date();
+
+            // ===== HOJA 1: RESUMEN Y ESTADÍSTICAS =====
+            const summarySheet = workbook.addWorksheet('Resumen');
+            
+            // Título
+            summarySheet.getCell('A1').value = 'DASHBOARD DE RESERVAS';
+            summarySheet.getCell('A1').font = { size: 16, bold: true };
+            summarySheet.mergeCells('A1:D1');
+            summarySheet.getRow(1).height = 25;
+
+            // Fecha de generación y rango
+            const rangoTexto = fechaInicioDate && fechaFinDate
+                ? `Período: ${fechaInicioDate.toLocaleDateString('es-PE')} - ${fechaFinDate.toLocaleDateString('es-PE')}`
+                : 'Período: Todos los datos';
+            
+            summarySheet.getCell('A2').value = `Generado el: ${new Date().toLocaleString('es-PE')}`;
+            summarySheet.getCell('A2').font = { size: 10, italic: true };
+            summarySheet.mergeCells('A2:D2');
+            
+            summarySheet.getCell('A3').value = rangoTexto;
+            summarySheet.getCell('A3').font = { size: 10, italic: true };
+            summarySheet.mergeCells('A3:D3');
+            
+            summarySheet.getRow(4).height = 5; // Espacio
+
+            // Estadísticas generales
+            let row = 5;
+            summarySheet.getCell(`A${row}`).value = 'ESTADÍSTICAS GENERALES';
+            summarySheet.getCell(`A${row}`).font = { size: 12, bold: true };
+            summarySheet.mergeCells(`A${row}:B${row}`);
+            row++;
+
+            const stats = [
+                ['Total de Reservas', dashboardData.stats.totalReservas],
+                ['Reservas Activas', dashboardData.stats.reservasActivas],
+                ['Reservas Canceladas', dashboardData.stats.reservasCanceladas],
+                ['Reservas Cerradas', dashboardData.stats.reservasCerradas],
+                ['Incidencias Abiertas', dashboardData.stats.incidenciasAbiertas],
+                ['Total de Aulas', dashboardData.stats.totalAulas],
+                ['Total de Equipos', dashboardData.stats.totalEquipos],
+            ];
+
+            summarySheet.getRow(row).height = 20;
+            summarySheet.getCell(`A${row}`).value = 'Métrica';
+            summarySheet.getCell(`B${row}`).value = 'Valor';
+            summarySheet.getRow(row).font = { bold: true };
+            summarySheet.getRow(row).alignment = { horizontal: 'center', vertical: 'middle' };
+            row++;
+
+            stats.forEach(([label, value]) => {
+                summarySheet.getCell(`A${row}`).value = label;
+                summarySheet.getCell(`B${row}`).value = value as number;
+                summarySheet.getRow(row).height = 18;
+                row++;
+            });
+
+            // Aplicar bordes y formato
+            for (let i = 5; i < row; i++) {
+                summarySheet.getCell(`A${i}`).border = {
+                    top: { style: 'thin' },
+                    left: { style: 'thin' },
+                    bottom: { style: 'thin' },
+                    right: { style: 'thin' },
+                };
+                summarySheet.getCell(`B${i}`).border = {
+                    top: { style: 'thin' },
+                    left: { style: 'thin' },
+                    bottom: { style: 'thin' },
+                    right: { style: 'thin' },
+                };
+                summarySheet.getCell(`A${i}`).alignment = { horizontal: 'left', vertical: 'middle' };
+                summarySheet.getCell(`B${i}`).alignment = { horizontal: 'center', vertical: 'middle' };
+            }
+
+            // Ajustar ancho de columnas
+            summarySheet.getColumn(1).width = 25;
+            summarySheet.getColumn(2).width = 15;
+
+            // Calcular diferencia de días para determinar si mostrar por día o por semana
+            let diferenciaDias = 0;
+            if (fechaInicioDate && fechaFinDate) {
+                diferenciaDias = Math.ceil((fechaFinDate.getTime() - fechaInicioDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+            } else {
+                // Si no hay fechas, usar el último mes (aproximadamente 30 días)
+                diferenciaDias = 30;
+            }
+
+            // ===== HOJA 2: GRÁFICO DE RESERVAS POR DÍA/SEMANA =====
+            // Solo crear esta hoja si el rango es <= 30 días (Hoy, Últimos 7 días, Últimos 30 días)
+            if (diferenciaDias <= 30) {
+                const chartSheet1 = workbook.addWorksheet('Reservas por Día');
+                
+                // Datos para el gráfico
+                chartSheet1.getCell('A1').value = 'Día';
+                chartSheet1.getCell('B1').value = 'Cantidad de Reservas';
+                chartSheet1.getRow(1).font = { bold: true };
+                chartSheet1.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
+
+                dashboardData.chartData.labels.forEach((label, index) => {
+                    chartSheet1.getCell(`A${index + 2}`).value = label;
+                    chartSheet1.getCell(`B${index + 2}`).value = dashboardData.chartData.data[index];
+                });
+
+                chartSheet1.getColumn(1).width = 20;
+                chartSheet1.getColumn(2).width = 20;
+
+                // Generar imagen del gráfico de barras
+                const tituloGrafico1 = fechaInicioDate && fechaFinDate
+                    ? `Reservas por Día (${fechaInicioDate.toLocaleDateString('es-PE')} - ${fechaFinDate.toLocaleDateString('es-PE')})`
+                    : 'Reservas por Día (Últimos 7 Días)';
+                
+                const chartImage1 = await chartJSNodeCanvas.renderToBuffer({
+                    type: 'bar',
+                    data: {
+                        labels: dashboardData.chartData.labels,
+                        datasets: [{
+                            label: 'Reservas por Día',
+                            data: dashboardData.chartData.data,
+                            backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: tituloGrafico1,
+                                font: { size: 16 }
+                            },
+                            legend: {
+                                display: true
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+
+                // Insertar imagen en Excel
+                const imageId1 = workbook.addImage({
+                    buffer: chartImage1 as any,
+                    extension: 'png',
+                });
+                chartSheet1.addImage(imageId1, {
+                    tl: { col: 0, row: dashboardData.chartData.labels.length + 2 },
+                    ext: { width: 800, height: 400 }
+                });
+            } else {
+                // Si es > 30 días, crear hoja "Reservas por Semana"
+                const chartSheet1 = workbook.addWorksheet('Reservas por Semana');
+                
+                // Datos para el gráfico
+                chartSheet1.getCell('A1').value = 'Semana';
+                chartSheet1.getCell('B1').value = 'Cantidad de Reservas';
+                chartSheet1.getRow(1).font = { bold: true };
+                chartSheet1.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
+
+                dashboardData.chartData.labels.forEach((label, index) => {
+                    chartSheet1.getCell(`A${index + 2}`).value = label;
+                    chartSheet1.getCell(`B${index + 2}`).value = dashboardData.chartData.data[index];
+                });
+
+                chartSheet1.getColumn(1).width = 30;
+                chartSheet1.getColumn(2).width = 20;
+
+                // Generar imagen del gráfico de barras
+                const tituloGrafico1 = fechaInicioDate && fechaFinDate
+                    ? `Reservas por Semana (${fechaInicioDate.toLocaleDateString('es-PE')} - ${fechaFinDate.toLocaleDateString('es-PE')})`
+                    : 'Reservas por Semana';
+                
+                const chartImage1 = await chartJSNodeCanvas.renderToBuffer({
+                    type: 'bar',
+                    data: {
+                        labels: dashboardData.chartData.labels,
+                        datasets: [{
+                            label: 'Reservas por Semana',
+                            data: dashboardData.chartData.data,
+                            backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: tituloGrafico1,
+                                font: { size: 16 }
+                            },
+                            legend: {
+                                display: true
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+
+                // Insertar imagen en Excel
+                const imageId1 = workbook.addImage({
+                    buffer: chartImage1 as any,
+                    extension: 'png',
+                });
+                chartSheet1.addImage(imageId1, {
+                    tl: { col: 0, row: dashboardData.chartData.labels.length + 2 },
+                    ext: { width: 800, height: 400 }
+                });
+            }
+
+            // ===== HOJA 3: GRÁFICO DE RESERVAS POR MES =====
+            const chartSheet2 = workbook.addWorksheet('Reservas por Mes');
+            
+            chartSheet2.getCell('A1').value = 'Mes';
+            chartSheet2.getCell('B1').value = 'Cantidad de Reservas';
+            chartSheet2.getRow(1).font = { bold: true };
+            chartSheet2.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
+
+            dashboardData.monthlyChartData.labels.forEach((label, index) => {
+                chartSheet2.getCell(`A${index + 2}`).value = label;
+                chartSheet2.getCell(`B${index + 2}`).value = dashboardData.monthlyChartData.data[index];
+            });
+
+            chartSheet2.getColumn(1).width = 15;
+            chartSheet2.getColumn(2).width = 20;
+
+            // Generar imagen del gráfico de líneas
+            const tituloGrafico2 = fechaInicioDate && fechaFinDate
+                ? `Reservas por Mes (${fechaInicioDate.toLocaleDateString('es-PE')} - ${fechaFinDate.toLocaleDateString('es-PE')})`
+                : 'Reservas por Mes (Últimos 6 Meses)';
+            
+            const chartImage2 = await chartJSNodeCanvas.renderToBuffer({
+                type: 'line',
+                data: {
+                    labels: dashboardData.monthlyChartData.labels,
+                    datasets: [{
+                        label: 'Reservas por Mes',
+                        data: dashboardData.monthlyChartData.data,
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: tituloGrafico2,
+                            font: { size: 16 }
+                        },
+                        legend: {
+                            display: true
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+
+            const imageId2 = workbook.addImage({
+                buffer: chartImage2 as any,
+                extension: 'png',
+            });
+            chartSheet2.addImage(imageId2, {
+                tl: { col: 0, row: dashboardData.monthlyChartData.labels.length + 2 },
+                ext: { width: 800, height: 400 }
+            });
+
+            // ===== HOJA 3: RANKING DE AULAS =====
+            const aulasSheet = workbook.addWorksheet('Ranking Aulas');
+            
+            aulasSheet.getCell('A1').value = 'Aula';
+            aulasSheet.getCell('B1').value = 'Reservas';
+            aulasSheet.getRow(1).font = { bold: true };
+            aulasSheet.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
+
+            if (dashboardData.aulasRanking && dashboardData.aulasRanking.length > 0) {
+                dashboardData.aulasRanking.forEach((aula, index) => {
+                    aulasSheet.getCell(`A${index + 2}`).value = aula.nombre || 'Sin nombre';
+                    aulasSheet.getCell(`B${index + 2}`).value = aula.reservas || 0;
+                });
+
+                aulasSheet.getColumn(1).width = 30;
+                aulasSheet.getColumn(2).width = 15;
+
+                // Aplicar bordes a la tabla
+                for (let i = 1; i <= dashboardData.aulasRanking.length + 1; i++) {
+                    aulasSheet.getCell(`A${i}`).border = {
+                        top: { style: 'thin' },
+                        left: { style: 'thin' },
+                        bottom: { style: 'thin' },
+                        right: { style: 'thin' },
+                    };
+                    aulasSheet.getCell(`B${i}`).border = {
+                        top: { style: 'thin' },
+                        left: { style: 'thin' },
+                        bottom: { style: 'thin' },
+                        right: { style: 'thin' },
+                    };
+                    aulasSheet.getCell(`A${i}`).alignment = { horizontal: 'left', vertical: 'middle' };
+                    aulasSheet.getCell(`B${i}`).alignment = { horizontal: 'center', vertical: 'middle' };
+                }
+            } else {
+                // Si no hay datos, mostrar mensaje
+                aulasSheet.getCell('A2').value = 'No hay datos disponibles para el período seleccionado';
+                aulasSheet.mergeCells('A2:B2');
+                aulasSheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle' };
+                aulasSheet.getCell('A2').font = { italic: true };
+            }
+
+            // Generar gráfico de barras horizontales si hay datos
+            if (dashboardData.aulasRanking && dashboardData.aulasRanking.length > 0) {
+                const chartImageAulas = await chartJSNodeCanvas.renderToBuffer({
+                    type: 'bar',
+                    data: {
+                        labels: dashboardData.aulasRanking.map(a => a.nombre),
+                        datasets: [{
+                            label: 'Reservas',
+                            data: dashboardData.aulasRanking.map(a => a.reservas),
+                            backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        indexAxis: 'y',
+                        responsive: true,
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: 'Top 5 Aulas Más Reservadas',
+                                font: { size: 16 }
+                            },
+                            legend: {
+                                display: true
+                            }
+                        },
+                        scales: {
+                            x: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+
+                const imageIdAulas = workbook.addImage({
+                    buffer: chartImageAulas as any,
+                    extension: 'png',
+                });
+                aulasSheet.addImage(imageIdAulas, {
+                    tl: { col: 0, row: dashboardData.aulasRanking.length + 2 },
+                    ext: { width: 800, height: 400 }
+                });
+            }
+
+            // ===== HOJA 5: RANKING DE EQUIPOS =====
+            const equiposSheet = workbook.addWorksheet('Ranking Equipos');
+            
+            equiposSheet.getCell('A1').value = 'Equipo';
+            equiposSheet.getCell('B1').value = 'Reservas';
+            equiposSheet.getRow(1).font = { bold: true };
+            equiposSheet.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
+
+            dashboardData.equiposRanking.forEach((equipo, index) => {
+                equiposSheet.getCell(`A${index + 2}`).value = equipo.nombre;
+                equiposSheet.getCell(`B${index + 2}`).value = equipo.reservas;
+            });
+
+            equiposSheet.getColumn(1).width = 30;
+            equiposSheet.getColumn(2).width = 15;
+
+            // Aplicar bordes a la tabla
+            for (let i = 1; i <= dashboardData.equiposRanking.length + 1; i++) {
+                equiposSheet.getCell(`A${i}`).border = {
+                    top: { style: 'thin' },
+                    left: { style: 'thin' },
+                    bottom: { style: 'thin' },
+                    right: { style: 'thin' },
+                };
+                equiposSheet.getCell(`B${i}`).border = {
+                    top: { style: 'thin' },
+                    left: { style: 'thin' },
+                    bottom: { style: 'thin' },
+                    right: { style: 'thin' },
+                };
+                equiposSheet.getCell(`A${i}`).alignment = { horizontal: 'left', vertical: 'middle' };
+                equiposSheet.getCell(`B${i}`).alignment = { horizontal: 'center', vertical: 'middle' };
+            }
+
+            // Generar gráfico de barras horizontales si hay datos
+            if (dashboardData.equiposRanking.length > 0) {
+                const chartImageEquipos = await chartJSNodeCanvas.renderToBuffer({
+                    type: 'bar',
+                    data: {
+                        labels: dashboardData.equiposRanking.map(e => e.nombre),
+                        datasets: [{
+                            label: 'Reservas',
+                            data: dashboardData.equiposRanking.map(e => e.reservas),
+                            backgroundColor: 'rgba(153, 102, 255, 0.6)',
+                            borderColor: 'rgba(153, 102, 255, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        indexAxis: 'y',
+                        responsive: true,
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: 'Top 5 Equipos Más Reservados',
+                                font: { size: 16 }
+                            },
+                            legend: {
+                                display: true
+                            }
+                        },
+                        scales: {
+                            x: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+
+                const imageIdEquipos = workbook.addImage({
+                    buffer: chartImageEquipos as any,
+                    extension: 'png',
+                });
+                equiposSheet.addImage(imageIdEquipos, {
+                    tl: { col: 0, row: dashboardData.equiposRanking.length + 2 },
+                    ext: { width: 800, height: 400 }
+                });
+            }
+
+            // Generar buffer
+            const writeResult = await workbook.xlsx.writeBuffer();
+            const buffer = Buffer.isBuffer(writeResult)
+                ? writeResult
+                : Buffer.from(writeResult);
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const fileName = `dashboard_reservas_${timestamp}.xlsx`;
+
+            return { buffer, fileName };
+        } catch (error) {
+            this.logger.error('Error al generar dashboard con gráficos', error as Error);
+            throw new HttpException(
+                'No se pudo generar el dashboard con gráficos',
                 HttpStatus.INTERNAL_SERVER_ERROR,
             );
         }

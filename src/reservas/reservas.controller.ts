@@ -94,6 +94,36 @@ export class ReservasController {
         }
     }
 
+    // Exportar dashboard con gráficos a Excel (SOLO ADMIN)
+    @Get('/dashboard/exportar')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
+    async exportDashboardExcel(
+        @Res() res,
+        @Query('fechaInicio') fechaInicio?: string,
+        @Query('fechaFin') fechaFin?: string,
+    ) {
+        try {
+            const { buffer, fileName } = await this.reservasService.exportDashboardToExcel({
+                fechaInicio,
+                fechaFin,
+            });
+
+            const encodedName = encodeURIComponent(fileName);
+
+            res.set({
+                'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'Content-Disposition': `attachment; filename="${fileName}"; filename*=UTF-8''${encodedName}`,
+            });
+
+            return res.status(HttpStatus.OK).send(buffer);
+        } catch (error) {
+            return res.status(error.status || HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
     // Obtener todas las reservas (SOLO ADMIN)
     @Get('/')
     @UseGuards(JwtAuthGuard, RolesGuard)

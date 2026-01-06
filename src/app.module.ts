@@ -8,6 +8,7 @@ import { AulasModule } from './aulas/aulas.module';
 import { ReservasModule } from './reservas/reservas.module';
 import { UsuariosModule } from './usuarios/usuarios.module';
 import { AuthModule } from './auth/auth.module';
+import { DeshabilitacionModule } from './deshabilitacion/deshabilitacion.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { AuthModule } from './auth/auth.module';
     ReservasModule,
     UsuariosModule,
     AuthModule,
+    DeshabilitacionModule,
   ],
   controllers: [AppController],
   providers: [AppService],
