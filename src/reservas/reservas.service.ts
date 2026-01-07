@@ -1814,13 +1814,13 @@ export class ReservasService {
             });
 
             // Configurar ChartJS para generar imágenes con soporte UTF-8
+            // Importar el adaptador de fechas justo antes de usar ChartJS
+            await import('chartjs-adapter-date-fns');
+
             const chartJSNodeCanvas = new ChartJSNodeCanvas({
                 width: 800,
                 height: 400,
                 backgroundColour: 'white',
-                plugins: {
-                    globalVariableLegacy: ['chartjs-adapter-date-fns'],
-                },
             });
 
             const workbook = new Workbook();
