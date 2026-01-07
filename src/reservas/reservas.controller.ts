@@ -454,6 +454,23 @@ export class ReservasController {
         }
     }
 
+    // Actualizar estados de reservas según su horario actual
+    @Patch('admin/actualizar-estados')
+    async actualizarEstadosReservas(@Res() res) {
+        try {
+            const resultado = await this.reservasService.actualizarEstadosReservas();
+            return res.status(HttpStatus.OK).json({
+                message: `Se actualizaron ${resultado.actualizadas} reservas exitosamente`,
+                actualizadas: resultado.actualizadas,
+                detalles: resultado.detalles,
+            });
+        } catch (error) {
+            return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
     // Obtener reservas por estado
     @Get('estado/:estado')
     async getReservasByEstado(

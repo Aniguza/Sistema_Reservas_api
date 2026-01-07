@@ -511,6 +511,9 @@ export class ReservasService {
 
     // Obtener todas las reservas
     async getAllReservas(): Promise<Reserva[]> {
+        // Actualizar estados antes de obtener todas las reservas
+        await this.actualizarEstadosReservas();
+
         const reservas = await this.reservaModel
             .find()
             .populate('aulas', 'name codigo description imageUrl disponibilidad')
@@ -1199,9 +1202,9 @@ export class ReservasService {
             // Construir fecha y hora completa de fin de la reserva
             const fechaReserva = new Date(reserva.fecha);
             const [horaFin, minutosFin] = reserva.horaFin.split(':').map(Number);
-            fechaReserva.setHours(horaFin, minutosFin, 0, 0);
+            fechaReserva.setHours(horaFin, minutosFin, 59, 999); // Incluir segundos para evitar problemas de redondeo
 
-            // Si la reserva ya pasó
+            // Si la reserva ya pasó (comparar con la hora actual en UTC para evitar problemas de zona horaria)
             if (fechaReserva < ahora) {
                 const tieneIncidencias = reserva.incidencias && reserva.incidencias.length > 0;
                 const estadoAnterior = reserva.estado;
@@ -1221,7 +1224,8 @@ export class ReservasService {
 
                 reserva.updatedAt = new Date();
                 await this.asegurarCodigoReserva(reserva);
-                await reserva.save();
+                const reservaGuardada = await reserva.save();
+                console.log(`Reserva ${reserva._id} actualizada de ${estadoAnterior} a ${reservaGuardada.estado}`);
                 actualizadas++;
 
                 detalles.push({
@@ -1272,6 +1276,9 @@ export class ReservasService {
         fechaFin?: Date;
     }): Promise<any> {
         try {
+            // Actualizar estados antes de calcular estadísticas
+            await this.actualizarEstadosReservas();
+
             const ahora = new Date();
             
             // Determinar rango de fechas
@@ -1604,6 +1611,117 @@ export class ReservasService {
         }
     }
 
+    // ===== ACTUALIZACIÓN AUTOMÁTICA DE ESTADOS =====
+    async actualizarEstadosReservas(): Promise<{ actualizadas: number; detalles: any[] }> {
+        const ahora = new Date();
+        const detalles: any[] = [];
+
+        // Buscar TODAS las reservas que no están canceladas definitivamente
+        const todasReservas = await this.reservaModel.find({
+            estado: { $nin: ['cancelada'] }, // Excluir solo las canceladas definitivamente
+        }).exec();
+
+        let actualizadas = 0;
+
+        for (const reserva of todasReservas) {
+            const fechaReserva = new Date(reserva.fecha);
+            const [horaInicio, minutosInicio] = reserva.horaInicio.split(':').map(Number);
+            const [horaFin, minutosFin] = reserva.horaFin.split(':').map(Number);
+
+            // Crear fechas completas de inicio y fin
+            const fechaInicioReserva = new Date(fechaReserva);
+            fechaInicioReserva.setHours(horaInicio, minutosInicio, 0, 0);
+
+            const fechaFinReserva = new Date(fechaReserva);
+            fechaFinReserva.setHours(horaFin, minutosFin, 59, 999);
+
+            const estadoAnterior = reserva.estado;
+            let nuevoEstado = estadoAnterior;
+
+            // Determinar si tiene incidencias (por cantidad total)
+            const tieneIncidencias = reserva.incidencias && reserva.incidencias.length > 0;
+            const cantidadIncidencias = reserva.incidencias ? reserva.incidencias.length : 0;
+
+            // Determinar si tiene reprogramaciones
+            const tieneReprogramaciones = reserva.reprogramaciones &&
+                reserva.reprogramaciones.length > 0;
+
+
+            // Lógica de prioridad de estados:
+            // 1. Si está cancelada → mantener cancelada
+            // 2. Si está en horario actual → en_curso
+            // 3. Si ya terminó y tiene incidencias activas → cerrada_con_incidencia
+            // 4. Si ya terminó y no tiene incidencias activas → cerrada
+            // 5. Si tiene reprogramaciones y no ha terminado → reprogramada
+            // 6. Mantener estado actual si no aplica ninguna regla
+
+            if (estadoAnterior === 'cancelada') {
+                // Mantener cancelada
+                nuevoEstado = 'cancelada';
+            } else if (ahora >= fechaInicioReserva && ahora <= fechaFinReserva) {
+                // Está dentro del horario de la reserva
+                nuevoEstado = 'en_curso';
+            } else if (ahora > fechaFinReserva) {
+                // La reserva ya terminó - verificar si tiene incidencias ANTES de cerrarlas automáticamente
+                console.log(`Reserva ${reserva._id} terminó, verificando incidencias: ${tieneIncidencias}, cantidad: ${cantidadIncidencias}`);
+
+                // PRIMERO verificar si tiene incidencias (activas o no) para determinar el estado
+                if (tieneIncidencias) {
+                    nuevoEstado = 'cerrada_con_incidencia';
+                    console.log(`Cambiando a cerrada_con_incidencia por tener ${cantidadIncidencias} incidencia(s)`);
+                } else {
+                    nuevoEstado = 'cerrada';
+                }
+
+                // DESPUÉS cerrar incidencias automáticamente cuando la reserva termina
+                if (reserva.incidencias) {
+                    reserva.incidencias.forEach((inc: any) => {
+                        if (inc.estado !== 'cerrada') {
+                            inc.estado = 'cerrada';
+                            inc.actualizadoEn = new Date();
+                        }
+                    });
+                }
+            } else if (tieneReprogramaciones && ahora <= fechaFinReserva) {
+                // Si tiene reprogramaciones y no ha terminado aún
+                nuevoEstado = 'reprogramada';
+            } else {
+                // Reserva futura - mantener estado actual (confirmada o reprogramada)
+                // PERO si ya terminó y tiene incidencias, corregir el estado
+                if (ahora > fechaFinReserva && tieneIncidencias && estadoAnterior === 'cerrada') {
+                    nuevoEstado = 'cerrada_con_incidencia';
+                    console.log(`Corrigiendo estado: reserva ya terminó con ${cantidadIncidencias} incidencia(s), cambiando de cerrada a cerrada_con_incidencia`);
+                } else {
+                    nuevoEstado = estadoAnterior;
+                }
+            }
+
+            // Actualizar si el estado cambió
+            if (nuevoEstado !== estadoAnterior) {
+                console.log(`Actualizando reserva ${reserva._id}: ${estadoAnterior} -> ${nuevoEstado}`);
+                reserva.estado = nuevoEstado;
+                reserva.updatedAt = new Date();
+                await this.asegurarCodigoReserva(reserva);
+                await reserva.save();
+                actualizadas++;
+
+                detalles.push({
+                    reservaId: reserva._id,
+                    nombre: reserva.nombre,
+                    fecha: reserva.fecha,
+                    horaInicio: reserva.horaInicio,
+                    horaFin: reserva.horaFin,
+                    estadoAnterior,
+                    estadoNuevo: nuevoEstado,
+                    cantidadIncidencias: cantidadIncidencias,
+                    tieneReprogramaciones,
+                });
+            }
+        }
+
+        return { actualizadas, detalles };
+    }
+
     // ===== REPORTES =====
     async exportReservasToExcel(filtros?: {
         fechaInicio?: string;
@@ -1614,6 +1732,9 @@ export class ReservasService {
         tipo?: 'aula' | 'equipo';
     }): Promise<{ buffer: Buffer; fileName: string; total: number }> {
         try {
+            // Actualizar automáticamente los estados de las reservas antes de exportar
+            await this.actualizarEstadosReservas();
+
             const query: Record<string, any> = {};
 
             let rangoInicio: Date | undefined;

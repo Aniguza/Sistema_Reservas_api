@@ -19,7 +19,7 @@ export const reservasSchema = new Schema({
   estado: {
     type: String,
     enum: ['confirmada', 'reprogramada', 'en_curso', 'cancelada', 'cerrada', 'cerrada_con_incidencia'],
-    default: 'confirmada'
+    default: 'confirmada',
   },
   incidencias: [{
     descripcion: { type: String, required: true },
