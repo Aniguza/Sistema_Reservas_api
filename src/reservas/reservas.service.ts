@@ -9,8 +9,6 @@ import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
 import { Workbook } from 'exceljs';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
-import { registerFont } from 'canvas';
-import * as path from 'path';
 
 @Injectable()
 export class ReservasService {
@@ -1781,15 +1779,6 @@ export class ReservasService {
         }
     }
 
-    // Helper para obtener opciones de fuente con soporte UTF-8
-    private getFontOptions(size: number = 12) {
-        // Usar fuentes comunes que soportan UTF-8 y están disponibles en la mayoría de sistemas
-        return {
-            family: '"DejaVu Sans", "Liberation Sans", Arial, "Helvetica Neue", Helvetica, sans-serif',
-            size: size
-        };
-    }
-
     // ===== EXPORTAR DASHBOARD CON GRÁFICOS =====
     async exportDashboardToExcel(filtros?: {
         fechaInicio?: string;
@@ -1813,14 +1802,11 @@ export class ReservasService {
                 fechaFin: fechaFinDate,
             });
 
-            // Configurar ChartJS para generar imágenes con soporte UTF-8
+            // Configurar ChartJS para generar imágenes
             const chartJSNodeCanvas = new ChartJSNodeCanvas({
                 width: 800,
                 height: 400,
                 backgroundColour: 'white',
-                plugins: {
-                    globalVariableLegacy: ['chartjs-adapter-date-fns'],
-                },
             });
 
             const workbook = new Workbook();
@@ -2019,26 +2005,15 @@ export class ReservasService {
                             title: {
                                 display: true,
                                 text: tituloGrafico1,
-                                font: this.getFontOptions(16)
+                                font: { size: 16 }
                             },
                             legend: {
-                                display: true,
-                                labels: {
-                                    font: this.getFontOptions(12)
-                                }
+                                display: true
                             }
                         },
                         scales: {
                             y: {
-                                beginAtZero: true,
-                                ticks: {
-                                    font: this.getFontOptions(11)
-                                }
-                            },
-                            x: {
-                                ticks: {
-                                    font: this.getFontOptions(11)
-                                }
+                                beginAtZero: true
                             }
                         }
                     }
@@ -2096,26 +2071,15 @@ export class ReservasService {
                         title: {
                             display: true,
                             text: tituloGrafico2,
-                            font: this.getFontOptions(16)
+                            font: { size: 16 }
                         },
                         legend: {
-                            display: true,
-                            labels: {
-                                font: this.getFontOptions(12)
-                            }
+                            display: true
                         }
                     },
                     scales: {
                         y: {
-                            beginAtZero: true,
-                            ticks: {
-                                font: this.getFontOptions(11)
-                            }
-                        },
-                        x: {
-                            ticks: {
-                                font: this.getFontOptions(11)
-                            }
+                            beginAtZero: true
                         }
                     }
                 }
@@ -2193,26 +2157,15 @@ export class ReservasService {
                             title: {
                                 display: true,
                                 text: 'Top 5 Aulas Más Reservadas',
-                                font: this.getFontOptions(16)
+                                font: { size: 16 }
                             },
                             legend: {
-                                display: true,
-                                labels: {
-                                    font: this.getFontOptions(12)
-                                }
+                                display: true
                             }
                         },
                         scales: {
                             x: {
-                                beginAtZero: true,
-                                ticks: {
-                                    font: this.getFontOptions(11)
-                                }
-                            },
-                            y: {
-                                ticks: {
-                                    font: this.getFontOptions(11)
-                                }
+                                beginAtZero: true
                             }
                         }
                     }
@@ -2283,26 +2236,15 @@ export class ReservasService {
                             title: {
                                 display: true,
                                 text: 'Top 5 Equipos Más Reservados',
-                                font: this.getFontOptions(16)
+                                font: { size: 16 }
                             },
                             legend: {
-                                display: true,
-                                labels: {
-                                    font: this.getFontOptions(12)
-                                }
+                                display: true
                             }
                         },
                         scales: {
                             x: {
-                                beginAtZero: true,
-                                ticks: {
-                                    font: this.getFontOptions(11)
-                                }
-                            },
-                            y: {
-                                ticks: {
-                                    font: this.getFontOptions(11)
-                                }
+                                beginAtZero: true
                             }
                         }
                     }
