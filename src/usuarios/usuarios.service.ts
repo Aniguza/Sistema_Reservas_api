@@ -46,6 +46,13 @@ export class UsuariosService {
             .exec();
     }
 
+    async getUsuariosByRol(rol: string): Promise<Usuario[]> {
+        return await this.usuarioModel
+            .find({ rol })
+            .select('-contraseña')
+            .exec();
+    }
+
     // Buscar usuario por ID
     async getUsuarioById(id: string): Promise<Usuario> {
         const usuario = await this.usuarioModel

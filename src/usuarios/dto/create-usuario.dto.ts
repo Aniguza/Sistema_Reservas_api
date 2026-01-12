@@ -14,11 +14,11 @@ export class CreateUsuarioDto {
     @IsNotEmpty({ message: 'La carrera es obligatoria para alumnos' })
     carrera?: string;
 
-    @IsEnum(['docente', 'alumno', 'administrador'], {
-        message: 'El rol debe ser: docente, alumno o administrador',
+    @IsEnum(['docente', 'alumno', 'administrador', 'asistente'], {
+        message: 'El rol debe ser: docente, alumno, administrador o asistente',
     })
     @IsNotEmpty({ message: 'El rol es obligatorio' })
-    rol: 'docente' | 'alumno' | 'administrador';
+    rol: 'docente' | 'alumno' | 'administrador' | 'asistente';
 
     @IsString({ message: 'La contraseña debe ser un texto' })
     @MinLength(6, { message: 'La contraseña debe tener al menos 6 caracteres' })

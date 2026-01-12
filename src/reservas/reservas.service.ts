@@ -4,6 +4,7 @@ import { Model } from 'mongoose';
 import { Reserva } from './interfaces/reservas.interface';
 import { Aula } from '../aulas/interfaces/aulas.interface';
 import { Equipo } from '../equipos/interfaces/equipos.interface';
+import { Usuario } from '../usuarios/interfaces/usuarios.interface';
 import { MailService } from '../mail/mail.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
@@ -78,6 +79,7 @@ export class ReservasService {
         @InjectModel('Reserva') private readonly reservaModel: Model<Reserva>,
         @InjectModel('Aula') private readonly aulaModel: Model<Aula>,
         @InjectModel('Equipo') private readonly equipoModel: Model<Equipo>,
+        @InjectModel('Usuario') private readonly usuarioModel: Model<Usuario>,
         private readonly mailService: MailService,
     ) { }
 
@@ -86,6 +88,7 @@ export class ReservasService {
             .findById(reservaId)
             .populate('aulas', 'name codigo description imageUrl disponibilidad')
             .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
             .exec();
 
         if (!reserva) {
@@ -186,8 +189,7 @@ export class ReservasService {
 
         try {
             const ids = reservaObj.companeros.map((comp: any) => comp.toString());
-            const Usuario = this.reservaModel.db.model('Usuario');
-            const usuarios = await Usuario.find(
+            const usuarios = await this.usuarioModel.find(
                 { _id: { $in: ids } },
                 '_id correo nombre',
             )
@@ -518,6 +520,7 @@ export class ReservasService {
             .find()
             .populate('aulas', 'name codigo description imageUrl disponibilidad')
             .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
             .exec();
 
         return Promise.all(
@@ -531,6 +534,7 @@ export class ReservasService {
             .findById(id)
             .populate('aulas', 'name codigo description imageUrl disponibilidad')
             .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
             .exec();
 
         if (!reserva) {
@@ -739,6 +743,22 @@ export class ReservasService {
             this.logger.error(`No se pudo notificar cancelación ${reservaCancelada._id}`, mailError as Error);
         }
 
+        // Notificar a asistentes asignados o administradores
+        try {
+            await this.mailService.notifyCancelacionAsistenteAdmin({
+                asistentesAsignados: contexto.reservaObj.asistentesAsignados,
+                codigoReserva: contexto.codigoReserva,
+                solicitante: contexto.reservaObj.nombre,
+                fecha: contexto.fechaLegible,
+                ambiente: contexto.ambienteDescripcion,
+                horario: { inicio: contexto.reservaObj.horaInicio, fin: contexto.reservaObj.horaFin },
+                motivoCancelacion: motivoCorreo,
+                equipos: contexto.reservaObj.equipos,
+            });
+        } catch (mailError) {
+            this.logger.error(`No se pudo notificar cancelación a asistentes/admin ${reservaCancelada._id}`, mailError as Error);
+        }
+
         return reservaCancelada;
     }
 
@@ -759,6 +779,7 @@ export class ReservasService {
             .find({ aulas: aulaId })
             .populate('aulas', 'name codigo description imageUrl disponibilidad')
             .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
             .exec();
 
         return Promise.all(
@@ -772,6 +793,7 @@ export class ReservasService {
             .find({ 'equipos.equipo': equipoId })
             .populate('aulas', 'name codigo description imageUrl disponibilidad')
             .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
             .exec();
 
         return Promise.all(
@@ -785,6 +807,7 @@ export class ReservasService {
             .find({ correo: correo })
             .populate('aulas', 'name codigo description imageUrl disponibilidad')
             .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
             .sort({ fecha: -1 }) // Ordenar por fecha descendente (más recientes primero)
             .exec();
 
@@ -1663,12 +1686,10 @@ export class ReservasService {
                 nuevoEstado = 'en_curso';
             } else if (ahora > fechaFinReserva) {
                 // La reserva ya terminó - verificar si tiene incidencias ANTES de cerrarlas automáticamente
-                console.log(`Reserva ${reserva._id} terminó, verificando incidencias: ${tieneIncidencias}, cantidad: ${cantidadIncidencias}`);
 
                 // PRIMERO verificar si tiene incidencias (activas o no) para determinar el estado
                 if (tieneIncidencias) {
                     nuevoEstado = 'cerrada_con_incidencia';
-                    console.log(`Cambiando a cerrada_con_incidencia por tener ${cantidadIncidencias} incidencia(s)`);
                 } else {
                     nuevoEstado = 'cerrada';
                 }
@@ -2453,5 +2474,141 @@ export class ReservasService {
             default:
                 return { inicio, fin };
         }
+    }
+
+    // ===== MÉTODOS PARA GESTIÓN DE ASISTENTES =====
+
+    async asignarAsistente(reservaId: string, asistenteId: string, adminId: string) {
+        // Validar que el administrador no se esté asignando a sí mismo
+        if (adminId === asistenteId) {
+            throw new HttpException('No puedes asignarte una reserva a ti mismo', HttpStatus.BAD_REQUEST);
+        }
+
+        // Verificar que el asistente existe y tiene el rol correcto
+        const asistente = await this.usuarioModel.findById(asistenteId);
+
+        if (!asistente || (asistente.rol as string) !== 'asistente') {
+            throw new HttpException('Asistente no encontrado o no tiene permisos', HttpStatus.NOT_FOUND);
+        }
+
+        // Verificar si la reserva ya tiene este asistente asignado
+        const reservaExistente = await this.reservaModel.findById(reservaId);
+        if (!reservaExistente) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        // Verificar si el asistente ya está asignado
+        const asistentesAsignados = (reservaExistente as any).asistentesAsignados || [];
+        if (asistentesAsignados.includes(asistenteId)) {
+            throw new HttpException('Este asistente ya está asignado a la reserva', HttpStatus.BAD_REQUEST);
+        }
+
+        // Actualizar la reserva agregando el asistente al array
+        const reserva = await this.reservaModel
+            .findByIdAndUpdate(
+                reservaId,
+                { $push: { asistentesAsignados: asistenteId } },
+                { new: true }
+            )
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
+            .exec();
+
+        if (!reserva) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        // Enviar correo al asistente asignado
+        try {
+            // Obtener datos del asistente
+            const asistente = await this.usuarioModel.findById(asistenteId);
+            if (!asistente) {
+                throw new HttpException('Asistente no encontrado', HttpStatus.NOT_FOUND);
+            }
+
+            // Preparar datos para el correo
+            const fechaFormateada = reserva.fecha.toLocaleDateString('es-ES', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+
+            // Obtener nombre del ambiente (aula o equipos)
+            let ambienteNombre = '';
+            if (reserva.aulas && reserva.aulas.length > 0) {
+                ambienteNombre = (reserva.aulas[0] as any).name || (reserva.aulas[0] as any).codigo;
+            } else if (reserva.equipos && reserva.equipos.length > 0) {
+                ambienteNombre = 'Equipos de laboratorio';
+            }
+
+            // Enviar correo al asistente
+            await this.mailService.sendAsistenteAsignadoEmail({
+                email: asistente.correo,
+                nombre: asistente.nombre,
+                codigoReserva: reserva.codigo,
+                solicitante: reserva.nombre,
+                fecha: fechaFormateada,
+                ambiente: ambienteNombre,
+                horario: {
+                    inicio: reserva.horaInicio,
+                    fin: reserva.horaFin
+                },
+                equipos: reserva.equipos?.map(eq => ({
+                    nombre: (eq as any).nombre || eq.equipo,
+                    cantidad: eq.cantidad
+                }))
+            });
+        } catch (emailError) {
+            // Log del error pero no fallar la asignación
+            this.logger.error('Error enviando correo al asistente asignado', emailError as Error);
+        }
+
+        return reserva;
+    }
+
+    async desasignarAsistente(reservaId: string, asistenteId: string) {
+        // Verificar que la reserva existe
+        const reservaExistente = await this.reservaModel.findById(reservaId);
+        if (!reservaExistente) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        // Verificar si el asistente está asignado
+        const asistentesAsignados = (reservaExistente as any).asistentesAsignados || [];
+        if (!asistentesAsignados.includes(asistenteId)) {
+            throw new HttpException('Este asistente no está asignado a la reserva', HttpStatus.BAD_REQUEST);
+        }
+
+        // Desasignar el asistente del array
+        const reserva = await this.reservaModel
+            .findByIdAndUpdate(
+                reservaId,
+                { $pull: { asistentesAsignados: asistenteId } },
+                { new: true }
+            )
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
+            .exec();
+
+        if (!reserva) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        return reserva;
+    }
+
+    async getReservasByAsistente(asistenteId: string) {
+        const reservas = await this.reservaModel
+            .find({ asistentesAsignados: asistenteId })
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
+            .sort({ fecha: 1, horaInicio: 1 })
+            .exec();
+
+        return reservas;
     }
 } 

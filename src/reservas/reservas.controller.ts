@@ -11,6 +11,7 @@ import {
     Res,
     Query,
     UseGuards,
+    Request,
 } from '@nestjs/common';
 import { ReservasService } from './reservas.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
@@ -175,7 +176,7 @@ export class ReservasController {
         }
     }
 
-    // Reprogramar reserva (ALUMNOS, DOCENTES Y ADMIN)
+    // Reprogramar reserva (ALUMNOS, DOCENTES Y ADMIN - NO ASISTENTES)
     @Patch('/reprogramar/:id')
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles('administrador')
@@ -203,9 +204,10 @@ export class ReservasController {
         }
     }
 
-    // Cancelar reserva (ALUMNOS, DOCENTES Y ADMIN)
+    // Cancelar reserva (ALUMNOS, DOCENTES Y ADMIN - NO ASISTENTES)
     @Patch('/cancelar/:id')
-    @UseGuards(JwtAuthGuard)
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('alumno', 'docente', 'administrador')
     async cancelarReserva(
         @Res() res,
         @Param('id') id: string,
@@ -479,6 +481,86 @@ export class ReservasController {
     ) {
         try {
             const reservas = await this.reservasService.getReservasByEstado(estado);
+            return res.status(HttpStatus.OK).json(reservas);
+        } catch (error) {
+            return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
+    // ===== GESTIÓN DE ASISTENTES =====
+
+    // Asignar reserva a un asistente (SOLO ADMIN)
+    @Patch('/asignar-asistente/:id')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
+    async asignarAsistente(
+        @Res() res,
+        @Param('id') id: string,
+        @Body() body: { asistenteId: string },
+        @Request() req,
+    ) {
+        try {
+            const user = req.user; // Usuario del token JWT
+            const reserva = await this.reservasService.asignarAsistente(id, body.asistenteId, user._id);
+            return res.status(HttpStatus.OK).json({
+                message: 'Reserva asignada al asistente exitosamente',
+                reserva,
+            });
+        } catch (error) {
+            return res.status(error.status || HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
+    // Desasignar reserva de un asistente (SOLO ADMIN)
+    @Patch('/desasignar-asistente/:id')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
+    async desasignarAsistente(
+        @Res() res,
+        @Param('id') id: string,
+        @Body() body: { asistenteId: string }
+    ) {
+        try {
+            const reserva = await this.reservasService.desasignarAsistente(id, body.asistenteId);
+            return res.status(HttpStatus.OK).json({
+                message: 'Reserva desasignada del asistente exitosamente',
+                reserva,
+            });
+        } catch (error) {
+            return res.status(error.status || HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
+    // Obtener reservas asignadas a un asistente específico (SOLO ADMIN)
+    @Get('/asistente/:asistenteId')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
+    async getReservasByAsistente(@Res() res, @Param('asistenteId') asistenteId: string) {
+        try {
+            const reservas = await this.reservasService.getReservasByAsistente(asistenteId);
+            return res.status(HttpStatus.OK).json(reservas);
+        } catch (error) {
+            return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+                message: error.message,
+            });
+        }
+    }
+
+    // Obtener reservas asignadas al asistente actual (SOLO ASISTENTES)
+    @Get('/mis-asignaciones')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('asistente')
+    async getMisAsignaciones(@Res() res, @Request() req) {
+        try {
+            // El usuario se obtiene del token JWT a través del guard
+            const user = req.user;
+            const reservas = await this.reservasService.getReservasByAsistente(user._id);
             return res.status(HttpStatus.OK).json(reservas);
         } catch (error) {
             return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({

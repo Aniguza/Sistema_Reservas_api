@@ -21,6 +21,11 @@ export const reservasSchema = new Schema({
     enum: ['confirmada', 'reprogramada', 'en_curso', 'cancelada', 'cerrada', 'cerrada_con_incidencia'],
     default: 'confirmada',
   },
+  asistentesAsignados: [{
+    type: Schema.Types.ObjectId,
+    ref: 'Usuario',
+    required: false,
+  }],
   incidencias: [{
     descripcion: { type: String, required: true },
     tipo: { 

@@ -48,6 +48,22 @@ export class UsuariosController {
         }
     }
 
+    // Obtener usuarios por rol (SOLO ADMIN)
+    @Get('/rol/:rol')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('administrador')
+    async getUsuariosByRol(@Res() response, @Param('rol') rol: string) {
+        try {
+            const usuarios = await this.usuariosService.getUsuariosByRol(rol);
+            return response.status(HttpStatus.OK).json(usuarios);
+        } catch (error) {
+            return response.status(HttpStatus.BAD_REQUEST).json({
+                message: 'Error al obtener los usuarios por rol',
+                error: error.message,
+            });
+        }
+    }
+
     // Obtener perfil de usuario por correo (TODOS los roles autenticados)
     @Get('/perfil/:correo')
     @UseGuards(JwtAuthGuard)
