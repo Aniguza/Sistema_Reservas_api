@@ -415,10 +415,22 @@ export class MailService {
     horario: { inicio: string; fin: string };
     motivoCancelacion: string;
     equipos?: { nombre: string; cantidad: number }[];
+    isAdminCancelando?: boolean;
   }): Promise<void> {
     const { asistentesAsignados, codigoReserva, solicitante, fecha, ambiente, horario, motivoCancelacion, equipos } = params;
 
-    // Si hay asistentes asignados, enviar correo a cada uno
+    // Siempre enviar correo al administrador
+    await this.sendCancelacionAdminEmail({
+      codigoReserva,
+      solicitante,
+      fecha,
+      ambiente,
+      horario,
+      motivoCancelacion,
+      equipos,
+    });
+
+    // Enviar correo a los asistentes asignados (si existen)
     if (asistentesAsignados && asistentesAsignados.length > 0) {
       for (const asistente of asistentesAsignados) {
         try {
@@ -437,17 +449,6 @@ export class MailService {
           this.logger.error(`Error enviando correo de cancelación a asistente ${asistente.correo}`, error as Error);
         }
       }
-    } else {
-      // Si no hay asistentes asignados, enviar correo a administradores
-      await this.sendCancelacionAdminEmail({
-        codigoReserva,
-        solicitante,
-        fecha,
-        ambiente,
-        horario,
-        motivoCancelacion,
-        equipos,
-      });
     }
   }
 

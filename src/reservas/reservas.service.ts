@@ -570,7 +570,11 @@ export class ReservasService {
         horaFin: string,
         motivo?: string,
     ): Promise<Reserva> {
-        const reserva = await this.reservaModel.findById(id);
+        const reserva = await this.reservaModel.findById(id)
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
+            .exec();
 
         if (!reserva) {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
@@ -683,7 +687,11 @@ export class ReservasService {
         motivoCancelacion?: string,
         correoUsuario?: string
     ): Promise<Reserva> {
-        const reserva = await this.reservaModel.findById(id);
+        const reserva = await this.reservaModel.findById(id)
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
+            .exec();
 
         if (!reserva) {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
@@ -715,6 +723,19 @@ export class ReservasService {
                 'No se puede cancelar una reserva pasada',
                 HttpStatus.BAD_REQUEST,
             );
+        }
+
+        // Verificar que no hayan pasado 24 horas desde la confirmación (createdAt)
+        if (reserva.createdAt) {
+            const tiempoTranscurrido = ahora.getTime() - reserva.createdAt.getTime();
+            const horasTranscurridas = tiempoTranscurrido / (1000 * 60 * 60); // Convertir a horas
+
+            if (horasTranscurridas > 24) {
+                throw new HttpException(
+                    'No se puede cancelar una reserva después de 24 horas de su confirmación',
+                    HttpStatus.BAD_REQUEST,
+                );
+            }
         }
 
         reserva.estado = 'cancelada';
@@ -754,6 +775,7 @@ export class ReservasService {
                 horario: { inicio: contexto.reservaObj.horaInicio, fin: contexto.reservaObj.horaFin },
                 motivoCancelacion: motivoCorreo,
                 equipos: contexto.reservaObj.equipos,
+                isAdminCancelando: isAdmin,
             });
         } catch (mailError) {
             this.logger.error(`No se pudo notificar cancelación a asistentes/admin ${reservaCancelada._id}`, mailError as Error);
@@ -2497,9 +2519,9 @@ export class ReservasService {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
         }
 
-        // Verificar si el asistente ya está asignado
+        // Verificar si el asistente ya está asignado (antes del populate, son IDs)
         const asistentesAsignados = (reservaExistente as any).asistentesAsignados || [];
-        if (asistentesAsignados.includes(asistenteId)) {
+        if (asistentesAsignados.some((asistente: any) => asistente.toString() === asistenteId || asistente === asistenteId)) {
             throw new HttpException('Este asistente ya está asignado a la reserva', HttpStatus.BAD_REQUEST);
         }
 
@@ -2577,7 +2599,7 @@ export class ReservasService {
 
         // Verificar si el asistente está asignado
         const asistentesAsignados = (reservaExistente as any).asistentesAsignados || [];
-        if (!asistentesAsignados.includes(asistenteId)) {
+        if (!asistentesAsignados.some((asistente: any) => asistente.toString() === asistenteId || asistente === asistenteId)) {
             throw new HttpException('Este asistente no está asignado a la reserva', HttpStatus.BAD_REQUEST);
         }
 
