@@ -1,0 +1,20 @@
+[
+  {
+    "id": "69670e2d721f63edec488aa4",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 45,
+    "fecha_registro": "2026-01-14T03:31:57.453Z",
+    "usuario": "u20212225@utp.edu.pe",
+    "timestamp": "2026-01-14T03:31:57.504Z",
+    "createdAt": "2026-01-14T03:31:57.516Z"
+  },
+  {
+    "id": "696725b5721f63edec488cf3",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 101,
+    "fecha_registro": "2026-01-14T05:12:21.396Z",
+    "usuario": "u20212225@utp.edu.pe",
+    "timestamp": "2026-01-14T05:12:21.408Z",
+    "createdAt": "2026-01-14T05:12:21.410Z"
+  }
+]

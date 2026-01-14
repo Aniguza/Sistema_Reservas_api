@@ -27,8 +27,8 @@ export const UsuarioSchema = new Schema(
             type: String,
             required: [true, 'El rol es obligatorio'],
             enum: {
-                values: ['docente', 'alumno', 'administrador'],
-                message: 'El rol debe ser: docente, alumno o administrador',
+                values: ['docente', 'alumno', 'administrador', 'asistente'],
+                message: 'El rol debe ser: docente, alumno, administrador o asistente',
             },
         },
         contraseña: {

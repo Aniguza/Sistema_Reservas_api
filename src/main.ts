@@ -19,12 +19,14 @@ async function bootstrap() {
   });
   await app.listen(process.env.PORT ?? 3000);
 
-  // console.log('🚀 Servidor iniciado en http://localhost:3000');
-  // console.log('📋 Endpoints disponibles:');
-  // console.log('  - POST /usuarios - Crear usuario');
-  // console.log('  - GET /usuarios - Listar usuarios');
-  // console.log('  - POST /auth/login - Login usuarios');
-  // console.log('  - POST /auth/admin/login - Login administrador');
-  // console.log('  - GET /auth/profile - Perfil (requiere token)');
+  console.log('🚀 Servidor iniciado en http://localhost:3000');
+  console.log('📋 Endpoints disponibles:');
+  console.log('  - POST /usuarios - Crear usuario');
+  console.log('  - GET /usuarios - Listar usuarios');
+  console.log('  - POST /auth/login - Login usuarios');
+  console.log('  - POST /auth/admin/login - Login administrador');
+  console.log('  - GET /auth/profile - Perfil (requiere token)');
+  console.log('  - POST /analytics/tiempo-formulario - Registrar métricas de tiempo');
+  console.log('  - GET /analytics/tiempo-formulario/stats - Obtener estadísticas');
 }
 bootstrap();

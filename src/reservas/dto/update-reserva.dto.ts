@@ -10,4 +10,5 @@ export class UpdateReservaDto {
     readonly horaFin?: string;
     readonly motivo?: string;
     readonly estado?: 'pendiente' | 'confirmada' | 'en_curso' | 'cancelada' |  'cerrada' | 'cerrada_con_incidencia';
+    readonly asistentesAsignados?: string[]; // IDs de los usuarios asistentes
 }

@@ -4,13 +4,12 @@ import { Model } from 'mongoose';
 import { Reserva } from './interfaces/reservas.interface';
 import { Aula } from '../aulas/interfaces/aulas.interface';
 import { Equipo } from '../equipos/interfaces/equipos.interface';
+import { Usuario } from '../usuarios/interfaces/usuarios.interface';
 import { MailService } from '../mail/mail.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
 import { Workbook } from 'exceljs';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
-import { registerFont } from 'canvas';
-import * as path from 'path';
 
 @Injectable()
 export class ReservasService {
@@ -80,6 +79,7 @@ export class ReservasService {
         @InjectModel('Reserva') private readonly reservaModel: Model<Reserva>,
         @InjectModel('Aula') private readonly aulaModel: Model<Aula>,
         @InjectModel('Equipo') private readonly equipoModel: Model<Equipo>,
+        @InjectModel('Usuario') private readonly usuarioModel: Model<Usuario>,
         private readonly mailService: MailService,
     ) { }
 
@@ -88,6 +88,7 @@ export class ReservasService {
             .findById(reservaId)
             .populate('aulas', 'name codigo description imageUrl disponibilidad')
             .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
             .exec();
 
         if (!reserva) {
@@ -188,8 +189,7 @@ export class ReservasService {
 
         try {
             const ids = reservaObj.companeros.map((comp: any) => comp.toString());
-            const Usuario = this.reservaModel.db.model('Usuario');
-            const usuarios = await Usuario.find(
+            const usuarios = await this.usuarioModel.find(
                 { _id: { $in: ids } },
                 '_id correo nombre',
             )
@@ -513,10 +513,14 @@ export class ReservasService {
 
     // Obtener todas las reservas
     async getAllReservas(): Promise<Reserva[]> {
+        // Actualizar estados antes de obtener todas las reservas
+        await this.actualizarEstadosReservas();
+
         const reservas = await this.reservaModel
             .find()
             .populate('aulas', 'name codigo description imageUrl disponibilidad')
             .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
             .exec();
 
         return Promise.all(
@@ -530,6 +534,7 @@ export class ReservasService {
             .findById(id)
             .populate('aulas', 'name codigo description imageUrl disponibilidad')
             .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
             .exec();
 
         if (!reserva) {
@@ -565,7 +570,11 @@ export class ReservasService {
         horaFin: string,
         motivo?: string,
     ): Promise<Reserva> {
-        const reserva = await this.reservaModel.findById(id);
+        const reserva = await this.reservaModel.findById(id)
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
+            .exec();
 
         if (!reserva) {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
@@ -678,7 +687,11 @@ export class ReservasService {
         motivoCancelacion?: string,
         correoUsuario?: string
     ): Promise<Reserva> {
-        const reserva = await this.reservaModel.findById(id);
+        const reserva = await this.reservaModel.findById(id)
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
+            .exec();
 
         if (!reserva) {
             throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
@@ -712,6 +725,19 @@ export class ReservasService {
             );
         }
 
+        // Verificar que no hayan pasado 24 horas desde la confirmación (createdAt)
+        if (reserva.createdAt) {
+            const tiempoTranscurrido = ahora.getTime() - reserva.createdAt.getTime();
+            const horasTranscurridas = tiempoTranscurrido / (1000 * 60 * 60); // Convertir a horas
+
+            if (horasTranscurridas > 24) {
+                throw new HttpException(
+                    'No se puede cancelar una reserva después de 24 horas de su confirmación',
+                    HttpStatus.BAD_REQUEST,
+                );
+            }
+        }
+
         reserva.estado = 'cancelada';
         if (motivoCancelacion) {
             reserva.motivo = `${reserva.motivo} [CANCELADA: ${motivoCancelacion}]`;
@@ -738,6 +764,23 @@ export class ReservasService {
             this.logger.error(`No se pudo notificar cancelación ${reservaCancelada._id}`, mailError as Error);
         }
 
+        // Notificar a asistentes asignados o administradores
+        try {
+            await this.mailService.notifyCancelacionAsistenteAdmin({
+                asistentesAsignados: contexto.reservaObj.asistentesAsignados,
+                codigoReserva: contexto.codigoReserva,
+                solicitante: contexto.reservaObj.nombre,
+                fecha: contexto.fechaLegible,
+                ambiente: contexto.ambienteDescripcion,
+                horario: { inicio: contexto.reservaObj.horaInicio, fin: contexto.reservaObj.horaFin },
+                motivoCancelacion: motivoCorreo,
+                equipos: contexto.reservaObj.equipos,
+                isAdminCancelando: isAdmin,
+            });
+        } catch (mailError) {
+            this.logger.error(`No se pudo notificar cancelación a asistentes/admin ${reservaCancelada._id}`, mailError as Error);
+        }
+
         return reservaCancelada;
     }
 
@@ -758,6 +801,7 @@ export class ReservasService {
             .find({ aulas: aulaId })
             .populate('aulas', 'name codigo description imageUrl disponibilidad')
             .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
             .exec();
 
         return Promise.all(
@@ -771,6 +815,7 @@ export class ReservasService {
             .find({ 'equipos.equipo': equipoId })
             .populate('aulas', 'name codigo description imageUrl disponibilidad')
             .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
             .exec();
 
         return Promise.all(
@@ -784,6 +829,7 @@ export class ReservasService {
             .find({ correo: correo })
             .populate('aulas', 'name codigo description imageUrl disponibilidad')
             .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
             .sort({ fecha: -1 }) // Ordenar por fecha descendente (más recientes primero)
             .exec();
 
@@ -1201,9 +1247,9 @@ export class ReservasService {
             // Construir fecha y hora completa de fin de la reserva
             const fechaReserva = new Date(reserva.fecha);
             const [horaFin, minutosFin] = reserva.horaFin.split(':').map(Number);
-            fechaReserva.setHours(horaFin, minutosFin, 0, 0);
+            fechaReserva.setHours(horaFin, minutosFin, 59, 999); // Incluir segundos para evitar problemas de redondeo
 
-            // Si la reserva ya pasó
+            // Si la reserva ya pasó (comparar con la hora actual en UTC para evitar problemas de zona horaria)
             if (fechaReserva < ahora) {
                 const tieneIncidencias = reserva.incidencias && reserva.incidencias.length > 0;
                 const estadoAnterior = reserva.estado;
@@ -1223,7 +1269,8 @@ export class ReservasService {
 
                 reserva.updatedAt = new Date();
                 await this.asegurarCodigoReserva(reserva);
-                await reserva.save();
+                const reservaGuardada = await reserva.save();
+                console.log(`Reserva ${reserva._id} actualizada de ${estadoAnterior} a ${reservaGuardada.estado}`);
                 actualizadas++;
 
                 detalles.push({
@@ -1274,6 +1321,9 @@ export class ReservasService {
         fechaFin?: Date;
     }): Promise<any> {
         try {
+            // Actualizar estados antes de calcular estadísticas
+            await this.actualizarEstadosReservas();
+
             const ahora = new Date();
             
             // Determinar rango de fechas
@@ -1606,6 +1656,115 @@ export class ReservasService {
         }
     }
 
+    // ===== ACTUALIZACIÓN AUTOMÁTICA DE ESTADOS =====
+    async actualizarEstadosReservas(): Promise<{ actualizadas: number; detalles: any[] }> {
+        const ahora = new Date();
+        const detalles: any[] = [];
+
+        // Buscar TODAS las reservas que no están canceladas definitivamente
+        const todasReservas = await this.reservaModel.find({
+            estado: { $nin: ['cancelada'] }, // Excluir solo las canceladas definitivamente
+        }).exec();
+
+        let actualizadas = 0;
+
+        for (const reserva of todasReservas) {
+            const fechaReserva = new Date(reserva.fecha);
+            const [horaInicio, minutosInicio] = reserva.horaInicio.split(':').map(Number);
+            const [horaFin, minutosFin] = reserva.horaFin.split(':').map(Number);
+
+            // Crear fechas completas de inicio y fin
+            const fechaInicioReserva = new Date(fechaReserva);
+            fechaInicioReserva.setHours(horaInicio, minutosInicio, 0, 0);
+
+            const fechaFinReserva = new Date(fechaReserva);
+            fechaFinReserva.setHours(horaFin, minutosFin, 59, 999);
+
+            const estadoAnterior = reserva.estado;
+            let nuevoEstado = estadoAnterior;
+
+            // Determinar si tiene incidencias (por cantidad total)
+            const tieneIncidencias = reserva.incidencias && reserva.incidencias.length > 0;
+            const cantidadIncidencias = reserva.incidencias ? reserva.incidencias.length : 0;
+
+            // Determinar si tiene reprogramaciones
+            const tieneReprogramaciones = reserva.reprogramaciones &&
+                reserva.reprogramaciones.length > 0;
+
+
+            // Lógica de prioridad de estados:
+            // 1. Si está cancelada → mantener cancelada
+            // 2. Si está en horario actual → en_curso
+            // 3. Si ya terminó y tiene incidencias activas → cerrada_con_incidencia
+            // 4. Si ya terminó y no tiene incidencias activas → cerrada
+            // 5. Si tiene reprogramaciones y no ha terminado → reprogramada
+            // 6. Mantener estado actual si no aplica ninguna regla
+
+            if (estadoAnterior === 'cancelada') {
+                // Mantener cancelada
+                nuevoEstado = 'cancelada';
+            } else if (ahora >= fechaInicioReserva && ahora <= fechaFinReserva) {
+                // Está dentro del horario de la reserva
+                nuevoEstado = 'en_curso';
+            } else if (ahora > fechaFinReserva) {
+                // La reserva ya terminó - verificar si tiene incidencias ANTES de cerrarlas automáticamente
+
+                // PRIMERO verificar si tiene incidencias (activas o no) para determinar el estado
+                if (tieneIncidencias) {
+                    nuevoEstado = 'cerrada_con_incidencia';
+                } else {
+                    nuevoEstado = 'cerrada';
+                }
+
+                // DESPUÉS cerrar incidencias automáticamente cuando la reserva termina
+                if (reserva.incidencias) {
+                    reserva.incidencias.forEach((inc: any) => {
+                        if (inc.estado !== 'cerrada') {
+                            inc.estado = 'cerrada';
+                            inc.actualizadoEn = new Date();
+                        }
+                    });
+                }
+            } else if (tieneReprogramaciones && ahora <= fechaFinReserva) {
+                // Si tiene reprogramaciones y no ha terminado aún
+                nuevoEstado = 'reprogramada';
+            } else {
+                // Reserva futura - mantener estado actual (confirmada o reprogramada)
+                // PERO si ya terminó y tiene incidencias, corregir el estado
+                if (ahora > fechaFinReserva && tieneIncidencias && estadoAnterior === 'cerrada') {
+                    nuevoEstado = 'cerrada_con_incidencia';
+                    console.log(`Corrigiendo estado: reserva ya terminó con ${cantidadIncidencias} incidencia(s), cambiando de cerrada a cerrada_con_incidencia`);
+                } else {
+                    nuevoEstado = estadoAnterior;
+                }
+            }
+
+            // Actualizar si el estado cambió
+            if (nuevoEstado !== estadoAnterior) {
+                console.log(`Actualizando reserva ${reserva._id}: ${estadoAnterior} -> ${nuevoEstado}`);
+                reserva.estado = nuevoEstado;
+                reserva.updatedAt = new Date();
+                await this.asegurarCodigoReserva(reserva);
+                await reserva.save();
+                actualizadas++;
+
+                detalles.push({
+                    reservaId: reserva._id,
+                    nombre: reserva.nombre,
+                    fecha: reserva.fecha,
+                    horaInicio: reserva.horaInicio,
+                    horaFin: reserva.horaFin,
+                    estadoAnterior,
+                    estadoNuevo: nuevoEstado,
+                    cantidadIncidencias: cantidadIncidencias,
+                    tieneReprogramaciones,
+                });
+            }
+        }
+
+        return { actualizadas, detalles };
+    }
+
     // ===== REPORTES =====
     async exportReservasToExcel(filtros?: {
         fechaInicio?: string;
@@ -1616,6 +1775,9 @@ export class ReservasService {
         tipo?: 'aula' | 'equipo';
     }): Promise<{ buffer: Buffer; fileName: string; total: number }> {
         try {
+            // Actualizar automáticamente los estados de las reservas antes de exportar
+            await this.actualizarEstadosReservas();
+
             const query: Record<string, any> = {};
 
             let rangoInicio: Date | undefined;
@@ -1781,15 +1943,6 @@ export class ReservasService {
         }
     }
 
-    // Helper para obtener opciones de fuente con soporte UTF-8
-    private getFontOptions(size: number = 12) {
-        // Usar fuentes comunes que soportan UTF-8 y están disponibles en la mayoría de sistemas
-        return {
-            family: '"DejaVu Sans", "Liberation Sans", Arial, "Helvetica Neue", Helvetica, sans-serif',
-            size: size
-        };
-    }
-
     // ===== EXPORTAR DASHBOARD CON GRÁFICOS =====
     async exportDashboardToExcel(filtros?: {
         fechaInicio?: string;
@@ -1813,14 +1966,11 @@ export class ReservasService {
                 fechaFin: fechaFinDate,
             });
 
-            // Configurar ChartJS para generar imágenes con soporte UTF-8
+            // Configurar ChartJS para generar imágenes
             const chartJSNodeCanvas = new ChartJSNodeCanvas({
                 width: 800,
                 height: 400,
                 backgroundColour: 'white',
-                plugins: {
-                    globalVariableLegacy: ['chartjs-adapter-date-fns'],
-                },
             });
 
             const workbook = new Workbook();
@@ -2019,26 +2169,15 @@ export class ReservasService {
                             title: {
                                 display: true,
                                 text: tituloGrafico1,
-                                font: this.getFontOptions(16)
+                                font: { size: 16 }
                             },
                             legend: {
-                                display: true,
-                                labels: {
-                                    font: this.getFontOptions(12)
-                                }
+                                display: true
                             }
                         },
                         scales: {
                             y: {
-                                beginAtZero: true,
-                                ticks: {
-                                    font: this.getFontOptions(11)
-                                }
-                            },
-                            x: {
-                                ticks: {
-                                    font: this.getFontOptions(11)
-                                }
+                                beginAtZero: true
                             }
                         }
                     }
@@ -2096,26 +2235,15 @@ export class ReservasService {
                         title: {
                             display: true,
                             text: tituloGrafico2,
-                            font: this.getFontOptions(16)
+                            font: { size: 16 }
                         },
                         legend: {
-                            display: true,
-                            labels: {
-                                font: this.getFontOptions(12)
-                            }
+                            display: true
                         }
                     },
                     scales: {
                         y: {
-                            beginAtZero: true,
-                            ticks: {
-                                font: this.getFontOptions(11)
-                            }
-                        },
-                        x: {
-                            ticks: {
-                                font: this.getFontOptions(11)
-                            }
+                            beginAtZero: true
                         }
                     }
                 }
@@ -2193,26 +2321,15 @@ export class ReservasService {
                             title: {
                                 display: true,
                                 text: 'Top 5 Aulas Más Reservadas',
-                                font: this.getFontOptions(16)
+                                font: { size: 16 }
                             },
                             legend: {
-                                display: true,
-                                labels: {
-                                    font: this.getFontOptions(12)
-                                }
+                                display: true
                             }
                         },
                         scales: {
                             x: {
-                                beginAtZero: true,
-                                ticks: {
-                                    font: this.getFontOptions(11)
-                                }
-                            },
-                            y: {
-                                ticks: {
-                                    font: this.getFontOptions(11)
-                                }
+                                beginAtZero: true
                             }
                         }
                     }
@@ -2283,26 +2400,15 @@ export class ReservasService {
                             title: {
                                 display: true,
                                 text: 'Top 5 Equipos Más Reservados',
-                                font: this.getFontOptions(16)
+                                font: { size: 16 }
                             },
                             legend: {
-                                display: true,
-                                labels: {
-                                    font: this.getFontOptions(12)
-                                }
+                                display: true
                             }
                         },
                         scales: {
                             x: {
-                                beginAtZero: true,
-                                ticks: {
-                                    font: this.getFontOptions(11)
-                                }
-                            },
-                            y: {
-                                ticks: {
-                                    font: this.getFontOptions(11)
-                                }
+                                beginAtZero: true
                             }
                         }
                     }
@@ -2390,5 +2496,141 @@ export class ReservasService {
             default:
                 return { inicio, fin };
         }
+    }
+
+    // ===== MÉTODOS PARA GESTIÓN DE ASISTENTES =====
+
+    async asignarAsistente(reservaId: string, asistenteId: string, adminId: string) {
+        // Validar que el administrador no se esté asignando a sí mismo
+        if (adminId === asistenteId) {
+            throw new HttpException('No puedes asignarte una reserva a ti mismo', HttpStatus.BAD_REQUEST);
+        }
+
+        // Verificar que el asistente existe y tiene el rol correcto
+        const asistente = await this.usuarioModel.findById(asistenteId);
+
+        if (!asistente || (asistente.rol as string) !== 'asistente') {
+            throw new HttpException('Asistente no encontrado o no tiene permisos', HttpStatus.NOT_FOUND);
+        }
+
+        // Verificar si la reserva ya tiene este asistente asignado
+        const reservaExistente = await this.reservaModel.findById(reservaId);
+        if (!reservaExistente) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        // Verificar si el asistente ya está asignado (antes del populate, son IDs)
+        const asistentesAsignados = (reservaExistente as any).asistentesAsignados || [];
+        if (asistentesAsignados.some((asistente: any) => asistente.toString() === asistenteId || asistente === asistenteId)) {
+            throw new HttpException('Este asistente ya está asignado a la reserva', HttpStatus.BAD_REQUEST);
+        }
+
+        // Actualizar la reserva agregando el asistente al array
+        const reserva = await this.reservaModel
+            .findByIdAndUpdate(
+                reservaId,
+                { $push: { asistentesAsignados: asistenteId } },
+                { new: true }
+            )
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
+            .exec();
+
+        if (!reserva) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        // Enviar correo al asistente asignado
+        try {
+            // Obtener datos del asistente
+            const asistente = await this.usuarioModel.findById(asistenteId);
+            if (!asistente) {
+                throw new HttpException('Asistente no encontrado', HttpStatus.NOT_FOUND);
+            }
+
+            // Preparar datos para el correo
+            const fechaFormateada = reserva.fecha.toLocaleDateString('es-ES', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+
+            // Obtener nombre del ambiente (aula o equipos)
+            let ambienteNombre = '';
+            if (reserva.aulas && reserva.aulas.length > 0) {
+                ambienteNombre = (reserva.aulas[0] as any).name || (reserva.aulas[0] as any).codigo;
+            } else if (reserva.equipos && reserva.equipos.length > 0) {
+                ambienteNombre = 'Equipos de laboratorio';
+            }
+
+            // Enviar correo al asistente
+            await this.mailService.sendAsistenteAsignadoEmail({
+                email: asistente.correo,
+                nombre: asistente.nombre,
+                codigoReserva: reserva.codigo,
+                solicitante: reserva.nombre,
+                fecha: fechaFormateada,
+                ambiente: ambienteNombre,
+                horario: {
+                    inicio: reserva.horaInicio,
+                    fin: reserva.horaFin
+                },
+                equipos: reserva.equipos?.map(eq => ({
+                    nombre: (eq as any).nombre || eq.equipo,
+                    cantidad: eq.cantidad
+                }))
+            });
+        } catch (emailError) {
+            // Log del error pero no fallar la asignación
+            this.logger.error('Error enviando correo al asistente asignado', emailError as Error);
+        }
+
+        return reserva;
+    }
+
+    async desasignarAsistente(reservaId: string, asistenteId: string) {
+        // Verificar que la reserva existe
+        const reservaExistente = await this.reservaModel.findById(reservaId);
+        if (!reservaExistente) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        // Verificar si el asistente está asignado
+        const asistentesAsignados = (reservaExistente as any).asistentesAsignados || [];
+        if (!asistentesAsignados.some((asistente: any) => asistente.toString() === asistenteId || asistente === asistenteId)) {
+            throw new HttpException('Este asistente no está asignado a la reserva', HttpStatus.BAD_REQUEST);
+        }
+
+        // Desasignar el asistente del array
+        const reserva = await this.reservaModel
+            .findByIdAndUpdate(
+                reservaId,
+                { $pull: { asistentesAsignados: asistenteId } },
+                { new: true }
+            )
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
+            .exec();
+
+        if (!reserva) {
+            throw new HttpException('Reserva no encontrada', HttpStatus.NOT_FOUND);
+        }
+
+        return reserva;
+    }
+
+    async getReservasByAsistente(asistenteId: string) {
+        const reservas = await this.reservaModel
+            .find({ asistentesAsignados: asistenteId })
+            .populate('aulas', 'name codigo description imageUrl disponibilidad')
+            .populate('equipos.equipo', 'name')
+            .populate('asistentesAsignados', 'nombre correo')
+            .sort({ fecha: 1, horaInicio: 1 })
+            .exec();
+
+        return reservas;
     }
 } 

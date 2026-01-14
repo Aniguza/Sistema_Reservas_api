@@ -37,6 +37,7 @@ export interface Reserva extends Document {
     motivo: string;
     codigo: string;
     estado: 'pendiente' | 'confirmada' | 'reprogramada' | 'en_curso' | 'cancelada' |  'cerrada' | 'cerrada_con_incidencia';
+    asistentesAsignados?: { nombre: string; correo: string }[]; // Array de objetos con nombre y correo de asistentes
     incidencias?: Incidencia[];
     reprogramaciones?: Reprogramacion[];
     createdAt?: Date;
