@@ -319,7 +319,6 @@ export class MailService {
     emailData.subject = `Nueva reserva registrada - ${data.codigoReserva} - ${data.codigoAlumno} - ${nombreMayus}`;
     emailData.htmlContent = `
         <h2>Nueva reserva confirmada</h2>
-        <p>Se registró una nueva reserva (${data.reservaId}).</p>
         <ul>
           <li><b>Código de reserva:</b> ${data.codigoReserva}</li>
           <li><b>Código de alumno:</b> ${data.codigoAlumno}</li>

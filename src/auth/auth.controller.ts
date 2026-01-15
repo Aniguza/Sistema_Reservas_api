@@ -13,7 +13,7 @@ export class AuthController {
         return this.authService.login(loginDto);
     }
 
-    // Login específico para administradores
+    // Login específico para administradores y asistentes
     @Post('admin/login')
     async adminLogin(@Body() loginDto: LoginDto) {
         return this.authService.adminLogin(loginDto);

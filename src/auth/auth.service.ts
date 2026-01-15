@@ -49,7 +49,7 @@ export class AuthService {
         };
     }
 
-    // Login específico para administradores
+    // Login específico para administradores y asistentes
     async adminLogin(loginDto: LoginDto) {
         const usuario = await this.validateUser(loginDto.correo, loginDto.contraseña);
 
@@ -57,9 +57,9 @@ export class AuthService {
             throw new UnauthorizedException('Credenciales inválidas');
         }
 
-        // Verificar que sea administrador
-        if (usuario.rol !== 'administrador') {
-            throw new UnauthorizedException('Acceso denegado. Solo administradores.');
+        // Verificar que sea administrador o asistente
+        if (usuario.rol !== 'administrador' && usuario.rol !== 'asistente') {
+            throw new UnauthorizedException('Acceso denegado. Solo administradores y asistentes.');
         }
 
         const payload = {
