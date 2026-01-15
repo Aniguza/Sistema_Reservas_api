@@ -43,10 +43,10 @@ export class ReservasController {
         }
     }
 
-    // Obtener estadísticas agregadas para el dashboard (SOLO ADMIN)
+    // Obtener estadísticas agregadas para el dashboard (ADMIN Y ASISTENTES)
     @Get('/dashboard/stats')
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles('administrador')
+    @Roles('administrador', 'asistente')
     async getDashboardStats(@Res() res) {
         try {
             const stats = await this.reservasService.getDashboardStats();
@@ -58,10 +58,10 @@ export class ReservasController {
         }
     }
 
-    // Exportar reservas a Excel (SOLO ADMIN)
+    // Exportar reservas a Excel (ADMIN Y ASISTENTES)
     @Get('/reportes/excel')
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles('administrador')
+    @Roles('administrador', 'asistente')
     async exportReservasExcel(
         @Res() res,
         @Query('fechaInicio') fechaInicio?: string,
@@ -95,10 +95,10 @@ export class ReservasController {
         }
     }
 
-    // Exportar dashboard con gráficos a Excel (SOLO ADMIN)
+    // Exportar dashboard con gráficos a Excel (ADMIN Y ASISTENTES)
     @Get('/dashboard/exportar')
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles('administrador')
+    @Roles('administrador', 'asistente')
     async exportDashboardExcel(
         @Res() res,
         @Query('fechaInicio') fechaInicio?: string,
@@ -125,10 +125,10 @@ export class ReservasController {
         }
     }
 
-    // Obtener todas las reservas (SOLO ADMIN)
+    // Obtener todas las reservas (ADMIN Y ASISTENTES)
     @Get('/')
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles('administrador')
+    @Roles('administrador', 'asistente')
     async getAllReservas(@Res() res) {
         try {
             const reservas = await this.reservasService.getAllReservas();
@@ -154,10 +154,10 @@ export class ReservasController {
         }
     }
 
-    // Actualizar reserva (SOLO ADMIN)
+    // Actualizar reserva (ADMIN Y ASISTENTES)
     @Put('/update/:id')
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles('administrador')
+    @Roles('administrador', 'asistente')
     async updateReserva(
         @Res() res,
         @Param('id') id: string,
@@ -234,7 +234,7 @@ export class ReservasController {
     // Eliminar reserva (SOLO ADMIN)
     @Delete('/delete/:id')
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles('administrador')
+    @Roles('administrador', 'asistente')
     async deleteReserva(@Res() res, @Param('id') id: string) {
         try {
             const reserva = await this.reservasService.deleteReserva(id);
@@ -540,7 +540,7 @@ export class ReservasController {
     // Obtener reservas asignadas a un asistente específico (SOLO ADMIN)
     @Get('/asistente/:asistenteId')
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles('administrador')
+    @Roles('administrador', 'asistente')
     async getReservasByAsistente(@Res() res, @Param('asistenteId') asistenteId: string) {
         try {
             const reservas = await this.reservasService.getReservasByAsistente(asistenteId);

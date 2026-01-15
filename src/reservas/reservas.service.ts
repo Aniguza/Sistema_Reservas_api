@@ -10,10 +10,12 @@ import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
 import { Workbook } from 'exceljs';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
+import { Chart as ChartJS, registerables } from 'chart.js';
 
 @Injectable()
 export class ReservasService {
     private readonly logger = new Logger(ReservasService.name);
+
 
     private normalizarCodigoAula(codigo?: string): string | undefined {
         if (!codigo) {
@@ -81,7 +83,14 @@ export class ReservasService {
         @InjectModel('Equipo') private readonly equipoModel: Model<Equipo>,
         @InjectModel('Usuario') private readonly usuarioModel: Model<Usuario>,
         private readonly mailService: MailService,
-    ) { }
+    ) {
+        // Registrar todos los componentes de Chart.js
+        ChartJS.register(...registerables);
+
+        // Configurar fuente Arial como fuente por defecto
+        ChartJS.defaults.font.family = 'Arial';
+        ChartJS.defaults.font.size = 12;
+    }
 
     private async construirContextoReserva(reservaId: string) {
         const reserva = await this.reservaModel
