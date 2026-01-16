@@ -5,7 +5,7 @@ const os = require('os');
 console.log('🚀 Configurando fuentes para gráficos de Chart.js...');
 
 const platform = os.platform();
-const fontsDir = path.join(__dirname, '..', 'fonts');
+const fontsDir = path.join(__dirname, '..', 'src', 'fonts');
 
 try {
   // Verificar si existe el directorio de fuentes

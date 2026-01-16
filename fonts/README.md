@@ -1,12 +1,22 @@
 # Fuentes para Gráficos Chart.js
 
 ## Problema
-Los gráficos generados en producción mostraban "cuadritos" (caracteres inválidos) en lugar de texto legible porque faltaban las fuentes Arial.
+Los gráficos generados en producción mostraban "cuadritos" (caracteres inválidos) en lugar de texto legible porque faltaban las fuentes apropiadas.
 
 ## Solución: Fuentes Embebidas
-En lugar de depender de las fuentes del sistema operativo (que no están disponibles en Railway), ahora el proyecto incluye sus propias fuentes.
+En lugar de depender de las fuentes del sistema operativo (que no están disponibles en Railway), ahora el proyecto incluye sus propias fuentes Lato.
 
-## Cómo agregar fuentes Arial
+## Fuentes Disponibles
+El proyecto ya incluye fuentes **Lato** completas en `src/fonts/`:
+- `Lato-Regular.ttf` (Regular)
+- `Lato-Bold.ttf` (Bold)
+- `Lato-Italic.ttf` (Italic)
+- `Lato-BoldItalic.ttf` (Bold Italic)
+- `Lato-Light.ttf`, `Lato-Black.ttf`, etc.
+
+**Chart.js está configurado para usar `Lato` automáticamente.**
+
+## ¿Quieres usar Arial en su lugar?
 
 ### Opción 1: Descargar Arial (Recomendado)
 Si tienes una licencia válida de Microsoft Office o Windows:
