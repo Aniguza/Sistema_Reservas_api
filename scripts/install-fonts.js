@@ -1,72 +1,73 @@
-const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 const os = require('os');
 
-console.log('🚀 Instalando fuentes para gráficos de Chart.js...');
+console.log('🚀 Configurando fuentes para gráficos de Chart.js...');
 
 const platform = os.platform();
+const fontsDir = path.join(__dirname, '..', 'fonts');
 
 try {
+  // Verificar si existe el directorio de fuentes
+  if (!fs.existsSync(fontsDir)) {
+    console.log('📁 Creando directorio fonts...');
+    fs.mkdirSync(fontsDir, { recursive: true });
+  }
+
+  // Buscar fuentes disponibles en el directorio fonts/
+  const fontFiles = fs.readdirSync(fontsDir).filter(file => file.endsWith('.ttf') || file.endsWith('.otf'));
+
+  if (fontFiles.length > 0) {
+    console.log(`📄 Fuentes encontradas en /fonts: ${fontFiles.join(', ')}`);
+
+    // Intentar registrar las fuentes con Canvas
+    try {
+      const { registerFont } = require('canvas');
+
+      fontFiles.forEach(fontFile => {
+        const fontPath = path.join(fontsDir, fontFile);
+        const fontName = path.parse(fontFile).name;
+
+        try {
+          registerFont(fontPath, { family: fontName });
+          console.log(`✅ Fuente registrada: ${fontName} (${fontFile})`);
+        } catch (error) {
+          console.log(`⚠️  No se pudo registrar ${fontFile}:`, error.message);
+        }
+      });
+    } catch (error) {
+      console.log('⚠️  Canvas no disponible para registro de fuentes:', error.message);
+    }
+  } else {
+    console.log('⚠️  No se encontraron fuentes en el directorio /fonts');
+    console.log('ℹ️  Para mejores gráficos, agrega archivos .ttf al directorio fonts/');
+  }
+
+  // En Linux, intentar instalar fuentes del sistema como fallback
   if (platform === 'linux') {
-    console.log('📦 Detectado sistema Linux. Instalando fuentes...');
+    console.log('🐧 Detectado Linux. Instalando fuentes del sistema como fallback...');
 
-    // Actualizar repositorios
+    const { execSync } = require('child_process');
+
     try {
-      execSync('apt-get update', { stdio: 'inherit' });
+      execSync('apt-get update && apt-get install -y fonts-liberation fonts-dejavu-core', { stdio: 'inherit' });
+      console.log('✅ Fuentes del sistema instaladas');
     } catch (error) {
-      console.log('⚠️  No se pudo actualizar apt. Intentando continuar...');
+      console.log('⚠️  No se pudieron instalar fuentes del sistema:', error.message);
     }
 
-    // Instalar fuentes básicas
-    try {
-      execSync('apt-get install -y fonts-liberation fonts-dejavu-core', { stdio: 'inherit' });
-      console.log('✅ Fuentes básicas instaladas');
-    } catch (error) {
-      console.log('⚠️  No se pudieron instalar fuentes básicas:', error.message);
-    }
-
-    // Instalar fuentes Microsoft (Arial)
-    try {
-      // Aceptar licencia automáticamente
-      execSync('echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections', { stdio: 'inherit' });
-
-      execSync('apt-get install -y ttf-mscorefonts-installer', { stdio: 'inherit' });
-      console.log('✅ Fuentes Microsoft (Arial) instaladas');
-    } catch (error) {
-      console.log('⚠️  No se pudieron instalar fuentes Microsoft:', error.message);
-    }
-
-    // Actualizar cache de fuentes
     try {
       execSync('fc-cache -f -v', { stdio: 'inherit' });
       console.log('✅ Cache de fuentes actualizado');
     } catch (error) {
-      console.log('⚠️  No se pudo actualizar cache de fuentes:', error.message);
+      console.log('⚠️  No se pudo actualizar cache de fuentes');
     }
-
-    // Verificar instalación
-    try {
-      const result = execSync('fc-list | grep -i arial | head -3', { encoding: 'utf8' });
-      if (result.trim()) {
-        console.log('✅ Fuentes Arial encontradas:', result.trim());
-      } else {
-        console.log('⚠️  No se encontraron fuentes Arial');
-      }
-    } catch (error) {
-      console.log('⚠️  No se pudo verificar instalación de fuentes');
-    }
-
-  } else if (platform === 'darwin') {
-    console.log('🍎 Detectado macOS. Las fuentes deberían estar disponibles por defecto.');
-  } else if (platform === 'win32') {
-    console.log('🪟 Detectado Windows. Las fuentes Arial deberían estar disponibles por defecto.');
-  } else {
-    console.log(`⚠️  Plataforma no reconocida: ${platform}. Instalación de fuentes omitida.`);
   }
 
-  console.log('🎉 Instalación de fuentes completada!');
+  console.log('🎉 Configuración de fuentes completada!');
 
 } catch (error) {
-  console.error('❌ Error durante la instalación de fuentes:', error.message);
+  console.error('❌ Error durante la configuración de fuentes:', error.message);
   console.log('ℹ️  Los gráficos podrían mostrar caracteres incorrectos, pero la aplicación seguirá funcionando.');
   process.exit(0); // No fallar el build por esto
 }

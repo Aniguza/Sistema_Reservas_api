@@ -3,10 +3,7 @@ nixPkgs = ["fontconfig", "freetype", "libpng", "libjpeg", "giflib", "librsvg", "
 
 [phases.install]
 cmds = [
-  "apt-get update && apt-get install -y fonts-liberation fonts-dejavu-core ttf-mscorefonts-installer",
-  "echo 'ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true' | debconf-set-selections",
-  "fc-cache -f -v",
-  "fc-list | grep -i arial || echo 'Advertencia: Fuentes Arial no encontradas'"
+  "echo 'Usando fuentes embebidas del proyecto - no se requieren fuentes del sistema'"
 ]
 
 [start]

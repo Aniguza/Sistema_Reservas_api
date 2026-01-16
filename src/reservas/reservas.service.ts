@@ -88,12 +88,12 @@ export class ReservasService {
         ChartJS.register(...registerables);
         this.logger.log('Chart.js registrado con todos los componentes');
 
-        // Configurar fuente que no dependa del sistema (usando fuentes web-safe)
-        ChartJS.defaults.font.family = 'Courier New, monospace';
+        // Configurar fuente que use fuentes embebidas del proyecto
+        ChartJS.defaults.font.family = 'arial, arial, Arial, sans-serif';
         ChartJS.defaults.font.size = 12;
 
         this.logger.log(`Configuración de fuente Chart.js: family="${ChartJS.defaults.font.family}", size=${ChartJS.defaults.font.size}`);
-        this.logger.log('Configuración de fuente Courier New completada en constructor');
+        this.logger.log('Configuración de fuente Arial embebida completada en constructor');
     }
 
     private async construirContextoReserva(reservaId: string) {
@@ -2177,7 +2177,7 @@ export class ReservasService {
             this.logger.log('Iniciando configuración con ChartJSNodeCanvas optimizado para dashboard Excel');
 
             // Configurar ChartJS para usar fuentes embebidas y evitar dependencias del sistema
-            ChartJS.defaults.font.family = 'Arial, sans-serif';
+            ChartJS.defaults.font.family = 'arial, Arial, sans-serif';
             ChartJS.defaults.font.size = 12;
 
             const chartJSNodeCanvas = new ChartJSNodeCanvas({
@@ -2186,7 +2186,7 @@ export class ReservasService {
                 backgroundColour: 'white',
                 chartCallback: (ChartJS) => {
                     // Forzar configuración de fuentes que no dependan del sistema
-                    ChartJS.defaults.font.family = 'Arial, sans-serif';
+                    ChartJS.defaults.font.family = 'arial, Arial, sans-serif';
                     ChartJS.defaults.font.size = 12;
                     ChartJS.defaults.responsive = false;
                     ChartJS.defaults.maintainAspectRatio = false;
@@ -2334,12 +2334,12 @@ export class ReservasService {
                                 title: {
                                     display: true,
                                     text: tituloGrafico1,
-                                    font: { size: 16, family: 'Arial, sans-serif' }
+                                    font: { size: 16, family: 'arial, Arial, sans-serif' }
                                 },
                                 legend: {
                                     display: true,
                                     labels: {
-                                        font: { family: 'Arial, sans-serif' }
+                                        font: { family: 'arial, Arial, sans-serif' }
                                     }
                                 }
                             },
@@ -2347,12 +2347,12 @@ export class ReservasService {
                                 y: {
                                     beginAtZero: true,
                                     ticks: {
-                                        font: { family: 'Arial, sans-serif' }
+                                        font: { family: 'arial, Arial, sans-serif' }
                                     }
                                 },
                                 x: {
                                     ticks: {
-                                        font: { family: 'Arial, sans-serif' }
+                                        font: { family: 'arial, Arial, sans-serif' }
                                     }
                                 }
                             }
@@ -2417,12 +2417,12 @@ export class ReservasService {
                                 title: {
                                     display: true,
                                     text: tituloGrafico1,
-                                    font: { size: 16, family: 'Arial, sans-serif' }
+                                    font: { size: 16, family: 'arial, Arial, sans-serif' }
                                 },
                                 legend: {
                                     display: true,
                                     labels: {
-                                        font: { family: 'Arial, sans-serif' }
+                                        font: { family: 'arial, Arial, sans-serif' }
                                     }
                                 }
                             },
@@ -2430,12 +2430,12 @@ export class ReservasService {
                                 y: {
                                     beginAtZero: true,
                                     ticks: {
-                                        font: { family: 'Arial, sans-serif' }
+                                        font: { family: 'arial, Arial, sans-serif' }
                                     }
                                 },
                                 x: {
                                     ticks: {
-                                        font: { family: 'Arial, sans-serif' }
+                                        font: { family: 'arial, Arial, sans-serif' }
                                     }
                                 }
                             }
@@ -2503,12 +2503,12 @@ export class ReservasService {
                             title: {
                                 display: true,
                                 text: tituloGrafico2,
-                                font: { size: 16, family: 'Arial, sans-serif' }
+                                font: { size: 16, family: 'arial, Arial, sans-serif' }
                             },
                             legend: {
                                 display: true,
                                 labels: {
-                                    font: { family: 'Arial, sans-serif' }
+                                    font: { family: 'arial, Arial, sans-serif' }
                                 }
                             }
                         },
@@ -2516,12 +2516,12 @@ export class ReservasService {
                             y: {
                                 beginAtZero: true,
                                 ticks: {
-                                    font: { family: 'Arial, sans-serif' }
+                                    font: { family: 'arial, Arial, sans-serif' }
                                 }
                             },
                             x: {
                                 ticks: {
-                                    font: { family: 'Arial, sans-serif' }
+                                    font: { family: 'arial, Arial, sans-serif' }
                                 }
                             }
                         }
@@ -2609,12 +2609,12 @@ export class ReservasService {
                                 title: {
                                     display: true,
                                     text: 'Top 5 Aulas Más Reservadas',
-                                    font: { size: 16, family: 'Arial, sans-serif' }
+                                    font: { size: 16, family: 'arial, Arial, sans-serif' }
                                 },
                                 legend: {
                                     display: true,
                                     labels: {
-                                        font: { family: 'Arial, sans-serif' }
+                                        font: { family: 'arial, Arial, sans-serif' }
                                     }
                                 }
                             },
@@ -2622,12 +2622,12 @@ export class ReservasService {
                                 x: {
                                     beginAtZero: true,
                                     ticks: {
-                                        font: { family: 'Arial, sans-serif' }
+                                        font: { family: 'arial, Arial, sans-serif' }
                                     }
                                 },
                                 y: {
                                     ticks: {
-                                        font: { family: 'Arial, sans-serif' }
+                                        font: { family: 'arial, Arial, sans-serif' }
                                     }
                                 }
                             }
@@ -2708,12 +2708,12 @@ export class ReservasService {
                                 title: {
                                     display: true,
                                     text: 'Top 5 Equipos Más Reservados',
-                                    font: { size: 16, family: 'Arial, sans-serif' }
+                                    font: { size: 16, family: 'arial, Arial, sans-serif' }
                                 },
                                 legend: {
                                     display: true,
                                     labels: {
-                                        font: { family: 'Arial, sans-serif' }
+                                        font: { family: 'arial, Arial, sans-serif' }
                                     }
                                 }
                             },
@@ -2721,12 +2721,12 @@ export class ReservasService {
                                 x: {
                                     beginAtZero: true,
                                     ticks: {
-                                        font: { family: 'Arial, sans-serif' }
+                                        font: { family: 'arial, Arial, sans-serif' }
                                     }
                                 },
                                 y: {
                                     ticks: {
-                                        font: { family: 'Arial, sans-serif' }
+                                        font: { family: 'arial, Arial, sans-serif' }
                                     }
                                 }
                             }
