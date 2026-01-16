@@ -88,12 +88,12 @@ export class ReservasService {
         ChartJS.register(...registerables);
         this.logger.log('Chart.js registrado con todos los componentes');
 
-        // Configurar fuente Arial como fuente por defecto
-        ChartJS.defaults.font.family = 'Arial';
+        // Configurar fuente con fallbacks para máxima compatibilidad
+        ChartJS.defaults.font.family = 'DejaVu Sans, Liberation Sans, Arial, sans-serif';
         ChartJS.defaults.font.size = 12;
 
         this.logger.log(`Configuración de fuente Chart.js: family="${ChartJS.defaults.font.family}", size=${ChartJS.defaults.font.size}`);
-        this.logger.log('Configuración de fuente Arial completada en constructor');
+        this.logger.log('Configuración de fuente con fallbacks completada en constructor');
     }
 
     private async construirContextoReserva(reservaId: string) {
@@ -2277,6 +2277,7 @@ export class ReservasService {
 
             // ===== HOJA 2: GRÁFICO DE RESERVAS POR DÍA/SEMANA =====
             // Solo crear esta hoja si el rango es <= 30 días (Hoy, Últimos 7 días, Últimos 30 días)
+            this.logger.log(`Evaluando condición para gráficos: diferenciaDias = ${diferenciaDias}, condición = ${diferenciaDias <= 30}`);
             if (diferenciaDias <= 30) {
                 const chartSheet1 = workbook.addWorksheet('Reservas por Día');
                 
@@ -2299,7 +2300,7 @@ export class ReservasService {
                     ? `Reservas por Día (${fechaInicioDate.toLocaleDateString('es-PE')} - ${fechaFinDate.toLocaleDateString('es-PE')})`
                     : 'Reservas por Día (Últimos 7 Días)';
 
-                this.logger.log(`Generando gráfico "${tituloGrafico1}" - Fuentes: family="${ChartJS.defaults.font.family}", size=${ChartJS.defaults.font.size}`);
+                this.logger.log(`Generando gráfico "${tituloGrafico1}" - Fuentes globales: family="${ChartJS.defaults.font.family}", size=${ChartJS.defaults.font.size}`);
 
                 const chartImage1 = await chartJSNodeCanvas.renderToBuffer({
                     type: 'bar',
@@ -2411,6 +2412,7 @@ export class ReservasService {
             }
 
             // ===== HOJA 3: GRÁFICO DE RESERVAS POR MES =====
+            this.logger.log('Generando gráfico de Reservas por Mes');
             const chartSheet2 = workbook.addWorksheet('Reservas por Mes');
             
             chartSheet2.getCell('A1').value = 'Mes';
@@ -2475,6 +2477,7 @@ export class ReservasService {
             });
 
             // ===== HOJA 3: RANKING DE AULAS =====
+            this.logger.log('Generando gráfico de Ranking de Aulas');
             const aulasSheet = workbook.addWorksheet('Ranking Aulas');
             
             aulasSheet.getCell('A1').value = 'Aula';
@@ -2562,6 +2565,7 @@ export class ReservasService {
             }
 
             // ===== HOJA 5: RANKING DE EQUIPOS =====
+            this.logger.log('Generando gráfico de Ranking de Equipos');
             const equiposSheet = workbook.addWorksheet('Ranking Equipos');
             
             equiposSheet.getCell('A1').value = 'Equipo';
