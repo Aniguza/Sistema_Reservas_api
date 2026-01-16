@@ -86,10 +86,14 @@ export class ReservasService {
     ) {
         // Registrar todos los componentes de Chart.js
         ChartJS.register(...registerables);
+        this.logger.log('Chart.js registrado con todos los componentes');
 
         // Configurar fuente Arial como fuente por defecto
         ChartJS.defaults.font.family = 'Arial';
         ChartJS.defaults.font.size = 12;
+
+        this.logger.log(`Configuración de fuente Chart.js: family="${ChartJS.defaults.font.family}", size=${ChartJS.defaults.font.size}`);
+        this.logger.log('Configuración de fuente Arial completada en constructor');
     }
 
     private async construirContextoReserva(reservaId: string) {
@@ -2170,11 +2174,16 @@ export class ReservasService {
             });
 
             // Configurar ChartJS para generar imágenes
+            this.logger.log('Iniciando configuración de ChartJS para dashboard Excel');
+            this.logger.log(`Fuentes globales de Chart.js: family="${ChartJS.defaults.font.family}", size=${ChartJS.defaults.font.size}`);
+
             const chartJSNodeCanvas = new ChartJSNodeCanvas({
                 width: 800,
                 height: 400,
                 backgroundColour: 'white',
             });
+
+            this.logger.log('ChartJSNodeCanvas creado exitosamente');
 
             const workbook = new Workbook();
             workbook.creator = 'Sistema de Reservas';
@@ -2289,7 +2298,9 @@ export class ReservasService {
                 const tituloGrafico1 = fechaInicioDate && fechaFinDate
                     ? `Reservas por Día (${fechaInicioDate.toLocaleDateString('es-PE')} - ${fechaFinDate.toLocaleDateString('es-PE')})`
                     : 'Reservas por Día (Últimos 7 Días)';
-                
+
+                this.logger.log(`Generando gráfico "${tituloGrafico1}" - Fuentes: family="${ChartJS.defaults.font.family}", size=${ChartJS.defaults.font.size}`);
+
                 const chartImage1 = await chartJSNodeCanvas.renderToBuffer({
                     type: 'bar',
                     data: {
@@ -2321,6 +2332,8 @@ export class ReservasService {
                         }
                     }
                 });
+
+                this.logger.log(`Gráfico "${tituloGrafico1}" generado exitosamente. Tamaño del buffer: ${chartImage1.length} bytes`);
 
                 // Insertar imagen en Excel
                 const imageId1 = workbook.addImage({
@@ -2634,6 +2647,8 @@ export class ReservasService {
                 : Buffer.from(writeResult);
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
             const fileName = `dashboard_reservas_${timestamp}.xlsx`;
+
+            this.logger.log(`Dashboard Excel generado exitosamente. Archivo: ${fileName}, Tamaño: ${buffer.length} bytes`);
 
             return { buffer, fileName };
         } catch (error) {
