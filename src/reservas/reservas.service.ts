@@ -256,6 +256,24 @@ export class ReservasService {
         // Validar que la fecha sea de lunes a viernes
         this.validarDiaPermitido(fechaReserva);
 
+        // ===== VALIDACIÓN: UN USUARIO NO PUEDE HACER MÚLTIPLES RESERVAS EL MISMO DÍA =====
+        // Normalizar la fecha para evitar problemas de zona horaria
+        const fechaNormalizada = new Date(fecha);
+        fechaNormalizada.setHours(12, 0, 0, 0); // Establecer al mediodía para evitar cambios de día
+
+        const reservasUsuarioDia = await this.reservaModel.find({
+            correo: createReservaDto.correo,
+            fecha: fechaNormalizada,
+            estado: { $in: ['confirmada', 'pendiente'] }
+        }).exec();
+
+        if (reservasUsuarioDia.length > 0) {
+            throw new HttpException(
+                'Ya tienes una reserva confirmada para este día. Solo puedes hacer una reserva por día.',
+                HttpStatus.BAD_REQUEST,
+            );
+        }
+
         let aulasIds: string[] = [];
 
         // Si el tipo es 'equipo', buscar las aulas que contienen esos equipos
@@ -378,24 +396,22 @@ export class ReservasService {
         // Validar disponibilidad en el horario específico (incluye cantidades por equipo)
         // Validar que el horario esté dentro del rango permitido (09:00-21:00)
         this.validarHorarioPermitido(horaInicio, horaFin);
-        const disponible = await this.checkDisponibilidad(
+        const resultadoDisponibilidad = await this.checkDisponibilidad(
             aulasIds,
             equipos || [],
-            fecha,
+            fechaNormalizada,
             horaInicio,
             horaFin,
+            undefined,
+            createReservaDto.correo,
         );
 
-        if (!disponible) {
+        if (!resultadoDisponibilidad.disponible) {
             throw new HttpException(
-                'El aula no está disponible en el horario seleccionado. Ya existe una reserva en ese momento.',
+                resultadoDisponibilidad.motivo || 'El aula no está disponible en el horario seleccionado.',
                 HttpStatus.CONFLICT,
             );
         }
-
-        // Normalizar la fecha para evitar problemas de zona horaria
-        const fechaNormalizada = new Date(fecha);
-        fechaNormalizada.setHours(12, 0, 0, 0); // Establecer al mediodía para evitar cambios de día
 
         // Determinar el estado inicial según si la reserva ya pasó
         const ahora = new Date();
@@ -616,21 +632,26 @@ export class ReservasService {
         // Validar que la nueva fecha sea de lunes a viernes
         this.validarDiaPermitido(nuevaFecha);
 
+        // Normalizar la fecha para comparación consistente
+        const fechaNormalizada = new Date(fecha);
+        fechaNormalizada.setHours(12, 0, 0, 0);
+
         // Validar disponibilidad en la nueva fecha/hora (excluyendo esta reserva)
         // Validar que el horario esté dentro del rango permitido (09:00-21:00)
         this.validarHorarioPermitido(horaInicio, horaFin);
-        const disponible = await this.checkDisponibilidad(
+        const resultadoDisponibilidad = await this.checkDisponibilidad(
             reserva.aulas || [],
             reserva.equipos || [],
-            fecha,
+            fechaNormalizada,
             horaInicio,
             horaFin,
             id,
+            reserva.correo,
         );
 
-        if (!disponible) {
+        if (!resultadoDisponibilidad.disponible) {
             throw new HttpException(
-                'El aula no está disponible en el nuevo horario',
+                resultadoDisponibilidad.motivo || 'El aula no está disponible en el nuevo horario',
                 HttpStatus.CONFLICT,
             );
         }
@@ -855,10 +876,119 @@ export class ReservasService {
         horaInicio: string,
         horaFin: string,
         excludeReservaId?: string,
-    ): Promise<boolean> {
+        userCorreo?: string,
+    ): Promise<{ disponible: boolean; motivo?: string }> {
+        // Normalizar la fecha para comparación consistente (al mediodía)
+        const fechaNormalizada = new Date(fecha);
+        fechaNormalizada.setHours(12, 0, 0, 0);
+
+        console.log(`Buscando reservas para fecha normalizada: ${fechaNormalizada.toISOString()}`);
+
+        // ===== VALIDACIÓN DE DÍAS Y HORARIOS PERMITIDOS =====
+        const hoy = new Date();
+        hoy.setHours(0, 0, 0, 0); // Resetear hora para comparación de fechas
+
+        // Verificar que la fecha no sea en el pasado
+        if (fechaNormalizada < hoy) {
+            console.log('Validación fallida: Fecha en el pasado');
+            return { disponible: false, motivo: 'No se pueden hacer reservas para fechas pasadas' };
+        }
+
+        // Verificar anticipación mínima de 2 días
+        const diasAnticipacion = Math.floor((fechaNormalizada.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
+        if (diasAnticipacion < 2) {
+            console.log(`Validación fallida: Solo ${diasAnticipacion} días de anticipación (mínimo 2)`);
+            return { disponible: false, motivo: 'Las reservas requieren al menos 2 días de anticipación' };
+        }
+
+        // Verificar que sea lunes a viernes (1-5, donde 0=domingo, 6=sábado)
+        const diaSemana = fechaNormalizada.getDay();
+        if (diaSemana === 0 || diaSemana === 6) {
+            console.log(`Validación fallida: Día no permitido (día ${diaSemana}: ${diaSemana === 0 ? 'domingo' : 'sábado'})`);
+            return { disponible: false, motivo: 'Las reservas solo están disponibles de lunes a viernes' };
+        }
+
+        // Verificar horarios: 9:00 AM (09:00) a 9:00 PM (21:00)
+        const horaInicioNum = parseInt(horaInicio.split(':')[0]);
+        const horaFinNum = parseInt(horaFin.split(':')[0]);
+
+        if (horaInicioNum < 9 || horaInicioNum > 21 || horaFinNum < 9 || horaFinNum > 21) {
+            console.log(`Validación fallida: Horario fuera de rango - Inicio: ${horaInicioNum}, Fin: ${horaFinNum}`);
+            return { disponible: false, motivo: 'Las reservas solo están disponibles entre las 9:00 AM y las 9:00 PM' };
+        }
+
+        // Verificar que la hora de fin no sea anterior a la hora de inicio
+        if (horaFinNum < horaInicioNum) {
+            console.log(`Validación fallida: Hora fin (${horaFinNum}) anterior a hora inicio (${horaInicioNum})`);
+            return { disponible: false, motivo: 'La hora de fin no puede ser anterior a la hora de inicio' };
+        }
+
+        console.log('✅ Todas las validaciones de fecha y horario pasaron');
+
+        // Si no se pasaron aulas pero sí equipos, determinar las aulas automáticamente
+        console.log(`Parámetros recibidos - aulasIds: ${JSON.stringify(aulasIds)}, equipos: ${JSON.stringify(equipos)}`);
+        let aulasIdsFinales = [...aulasIds];
+        console.log(`Condición: aulasIds.length === 0 (${aulasIds.length === 0}) && equipos.length > 0 (${equipos.length > 0})`);
+        if (aulasIds.length === 0 && equipos.length > 0) {
+            console.log(`No se pasaron aulas, determinando aulas automáticamente para equipos: ${equipos.map(e => e.equipo).join(', ')}`);
+
+            // Extraer IDs de equipos
+            const equiposIds = equipos.map((e: any) => e.equipo);
+
+            // Buscar las aulas que contienen estos equipos
+            let aulas = await this.aulaModel.find({
+                equipos: { $in: equiposIds },
+            }).populate('equipos');
+
+            console.log('Equipos buscados:', equiposIds);
+            console.log('Aulas encontradas con $in:', aulas.length);
+            console.log('Aulas encontradas:', aulas.map(a => {
+                if (typeof a === 'object' && a && (a as any)._id) {
+                    return { id: (a as any)._id, equipos: (a as any).equipos?.map((e: any) => e._id?.toString()) };
+                } else if (typeof a === 'string') {
+                    return { id: a, equipos: [] };
+                }
+                return { id: 'unknown', equipos: [] };
+            }));
+
+            // Si no se encuentran aulas, intentar búsqueda alternativa
+            if (aulas.length === 0) {
+                const todasLasAulas = await this.aulaModel.find().populate('equipos');
+                aulas = todasLasAulas.filter((aula: any) => {
+                    if (!aula.equipos || aula.equipos.length === 0) return false;
+                    return aula.equipos.some((equipo: any) =>
+                        equiposIds.includes(equipo._id.toString())
+                    );
+                });
+                console.log('Aulas encontradas con búsqueda manual:', aulas.length);
+            }
+
+            if (aulas.length === 0) {
+                console.log('No se encontraron aulas para los equipos especificados');
+                // Si no hay aulas, significa que los equipos no existen o no están asignados
+                return { disponible: false, motivo: 'Los equipos seleccionados no están asignados a ninguna aula' };
+            }
+
+            // ===== VALIDACIÓN CRÍTICA: Todos los equipos deben pertenecer a LA MISMA AULA =====
+            const aulasUnicas = new Set<string>();
+            for (const aula of aulas) {
+                aulasUnicas.add((aula as any)._id.toString());
+            }
+
+            if (aulasUnicas.size > 1) {
+                console.log(`Los equipos pertenecen a ${aulasUnicas.size} aulas diferentes: ${Array.from(aulasUnicas).join(', ')}`);
+                console.log('Equipos deben pertenecer a la misma aula');
+                return { disponible: false, motivo: 'Los equipos seleccionados pertenecen a diferentes aulas' };
+            }
+
+            // Usar la única aula encontrada para la validación
+            aulasIdsFinales = [(aulas[0] as any)._id.toString()];
+            console.log(`Aula determinada automáticamente: ${aulasIdsFinales[0]}`);
+        }
+
         // Buscar reservas que coincidan con las aulas o equipos en la misma fecha
         const query: any = {
-            fecha: fecha,
+            fecha: fechaNormalizada,
             estado: { $in: ['pendiente', 'confirmada'] },
         };
 
@@ -871,8 +1001,8 @@ export class ReservasService {
         // Buscar reservas que incluyan alguna de las aulas o equipos
         query.$or = [];
 
-        if (aulasIds.length > 0) {
-            query.$or.push({ aulas: { $in: aulasIds } });
+        if (aulasIdsFinales.length > 0) {
+            query.$or.push({ aulas: { $in: aulasIdsFinales } });
         }
 
         if (equiposIds.length > 0) {
@@ -880,11 +1010,16 @@ export class ReservasService {
         }
 
         const reservasExistentes = await this.reservaModel.find(query).exec();
+        console.log(`Query ejecutado:`, JSON.stringify(query, null, 2));
+        console.log(`Reservas encontradas: ${reservasExistentes.length}`);
+        reservasExistentes.forEach((reserva, index) => {
+            console.log(`Reserva ${index + 1}: ID=${reserva._id}, Estado=${reserva.estado}, Aulas=${reserva.aulas?.join(',') || 'ninguna'}, Equipos=${reserva.equipos?.map(e => e.equipo).join(',') || 'ninguno'}`);
+        });
 
         // Verificar franjas ocupadas definidas en el documento de Aula
-        if (aulasIds.length > 0) {
+        if (aulasIdsFinales.length > 0) {
             const aulasDocs: any[] = await this.aulaModel
-                .find({ _id: { $in: aulasIds } })
+                .find({ _id: { $in: aulasIdsFinales } })
                 .select('occupiedRanges')
                 .lean()
                 .exec();
@@ -907,7 +1042,7 @@ export class ReservasService {
                             const rStart = new Date(r.start);
                             const rEnd = new Date(r.end);
                             if (overlaps(startReserva, endReserva, rStart, rEnd)) {
-                                return false;
+                                return { disponible: false, motivo: 'Conflicto con franjas ocupadas del aula' };
                             }
                         } catch (err) {
                             // Ignorar franjas inválidas
@@ -917,14 +1052,73 @@ export class ReservasService {
             }
         }
 
-        // Verificar conflictos de horario por aula (si hay alguna reserva que se solape)
-        // Aplicar buffer de 60 minutos entre reservas del mismo aula
+        // ===== VALIDACIÓN PRINCIPAL: CONFLICTOS POR AULA =====
+        // Si es la MISMA aula, NO permitir solapamiento (buffer = 0)
+        // Si es DIFERENTE aula, permitir con separación de 1 hora entre usuarios diferentes
+
+        console.log(`Verificando disponibilidad para aulas: ${aulasIdsFinales.join(', ')}`);
+        console.log(`Horario solicitado: ${horaInicio} - ${horaFin}`);
+        console.log(`Reservas existentes encontradas: ${reservasExistentes.length}`);
+
+        // Primero verificar conflictos en la MISMA aula (sin buffer)
         for (const reserva of reservasExistentes) {
-            if (this.hayConflictoHorario(horaInicio, horaFin, reserva.horaInicio, reserva.horaFin, 60)) {
-                // Si la reserva existente afecta a aulas solicitadas -> no disponible
-                if (aulasIds.length > 0 && reserva.aulas && reserva.aulas.some((a: any) => aulasIds.includes(a.toString()))) {
-                    return false;
+            console.log(`Verificando reserva existente: ${reserva._id} - Aulas: ${reserva.aulas?.map((a: any) => a.toString()).join(', ') || 'ninguna'} - Horario: ${reserva.horaInicio}-${reserva.horaFin}`);
+
+            // Verificar si la reserva existente usa alguna de las aulas solicitadas
+            let hayAulaComun = false;
+            if (aulasIdsFinales.length > 0 && reserva.aulas && reserva.aulas.length > 0) {
+                for (const aulaSolicitada of aulasIdsFinales) {
+                    for (const aulaExistente of reserva.aulas) {
+                        const aulaExistenteStr = aulaExistente.toString();
+                        console.log(`Comparando aula solicitada: "${aulaSolicitada}" con aula existente: "${aulaExistenteStr}"`);
+                        if (aulaSolicitada === aulaExistenteStr) {
+                            hayAulaComun = true;
+                            console.log(`✅ Aula común encontrada: ${aulaSolicitada}`);
+                            break;
+                        }
+                    }
+                    if (hayAulaComun) break;
                 }
+            }
+
+            if (hayAulaComun) {
+                console.log(`Verificando conflicto horario para misma aula...`);
+                // Si hay aulas en común, verificar conflicto SIN buffer (misma aula = conflicto inmediato)
+                if (this.hayConflictoHorario(horaInicio, horaFin, reserva.horaInicio, reserva.horaFin, 0)) {
+                    console.log(`❌ Conflicto detectado - Misma aula - Horario conflicto`);
+                    return { disponible: false, motivo: 'El aula no está disponible en el horario seleccionado' };
+                } else {
+                    console.log(`✅ No hay conflicto horario en misma aula`);
+                }
+            } else {
+                console.log(`No hay aulas en común con esta reserva`);
+            }
+        }
+
+        // ===== VALIDACIÓN: AL MENOS 1 HORA DE SEPARACIÓN ENTRE RESERVAS DE DIFERENTES USUARIOS =====
+        // Solo aplicar para aulas DIFERENTES (ya validamos conflictos de misma aula arriba)
+        const todasLasReservasDia = await this.reservaModel.find({
+            fecha: fechaNormalizada,
+            estado: { $in: ['confirmada', 'pendiente'] },
+        }).exec();
+
+        // Verificar que no haya conflicto con reservas de otros usuarios (mínimo 1 hora de separación)
+        for (const reserva of todasLasReservasDia) {
+            // Solo verificar si es de otro usuario (diferente correo) Y no usa las mismas aulas
+            if (userCorreo && reserva.correo !== userCorreo) {
+                // Verificar si esta reserva usa aulas DIFERENTES a las solicitadas
+                const aulasDiferentes = !reserva.aulas ||
+                    (reserva.aulas?.length === 0) ||
+                    !aulasIdsFinales.some(aulaId => reserva.aulas?.some((a: any) => a.toString() === aulaId));
+
+                if (aulasDiferentes) {
+                    // Si son aulas diferentes, aplicar buffer de 1 hora
+                    if (this.hayConflictoHorario(horaInicio, horaFin, reserva.horaInicio, reserva.horaFin, 60)) {
+                        console.log(`Conflicto detectado - Usuario diferente, aula diferente: separación de 1 hora requerida`);
+                        return { disponible: false, motivo: 'Conflicto de horario con otra reserva' };
+                    }
+                }
+                // Si son las mismas aulas, ya se validó arriba con buffer = 0
             }
         }
 
@@ -939,7 +1133,7 @@ export class ReservasService {
 
                 // Buscar reservas en la misma fecha que referencien este equipo
                 const reservasConEquipo = await this.reservaModel.find({
-                    fecha: fecha,
+                    fecha: fechaNormalizada,
                     estado: { $in: ['pendiente', 'confirmada'] },
                     'equipos.equipo': req.equipo,
                 }).exec();
@@ -960,12 +1154,12 @@ export class ReservasService {
                 // cantidad disponible actual
                 const disponibleEquipo = (equipoDoc.quantity || 0) - totalReservado;
                 if (disponibleEquipo < req.cantidad) {
-                    return false;
+                    return { disponible: false, motivo: `No hay suficiente cantidad del equipo disponible (${disponibleEquipo} disponible, ${req.cantidad} solicitado)` };
                 }
             }
         }
 
-        return true;
+        return { disponible: true };
     }
 
     // Verificar si hay conflicto de horario
@@ -2509,7 +2703,7 @@ export class ReservasService {
 
     // ===== MÉTODOS PARA GESTIÓN DE ASISTENTES =====
 
-    async asignarAsistente(reservaId: string, asistenteId: string, adminId: string) {
+    async asignarAsistente(reservaId: string, asistenteId: string, adminId: string): Promise<Reserva> {
         // Validar que el administrador no se esté asignando a sí mismo
         if (adminId === asistenteId) {
             throw new HttpException('No puedes asignarte una reserva a ti mismo', HttpStatus.BAD_REQUEST);
@@ -2599,7 +2793,7 @@ export class ReservasService {
         return reserva;
     }
 
-    async desasignarAsistente(reservaId: string, asistenteId: string) {
+    async desasignarAsistente(reservaId: string, asistenteId: string): Promise<Reserva> {
         // Verificar que la reserva existe
         const reservaExistente = await this.reservaModel.findById(reservaId);
         if (!reservaExistente) {
@@ -2631,7 +2825,7 @@ export class ReservasService {
         return reserva;
     }
 
-    async getReservasByAsistente(asistenteId: string) {
+    async getReservasByAsistente(asistenteId: string): Promise<Reserva[]> {
         const reservas = await this.reservaModel
             .find({ asistentesAsignados: asistenteId })
             .populate('aulas', 'name codigo description imageUrl disponibilidad')

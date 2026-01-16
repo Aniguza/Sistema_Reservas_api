@@ -1,0 +1,122 @@
+REGLAS DE VALIDACIÓN PARA EL SISTEMA DE RESERVAS - FRONTEND
+
+================================================================================
+
+FECHA: 15 de enero de 2026
+VERSIÓN: 1.0
+
+================================================================================
+
+DESCRIPCIÓN GENERAL:
+El sistema de reservas ha implementado nuevas reglas de validación para mejorar
+el control y evitar conflictos entre reservas.
+
+================================================================================
+
+REGLAS IMPLEMENTADAS:
+
+1. RESERVAS POR USUARIO POR DÍA
+   --------------------------------
+   • Un usuario (docente o alumno) solo puede hacer UNA reserva por día.
+   • Si intenta hacer una segunda reserva el mismo día, el sistema rechazará
+     la solicitud con el mensaje:
+     "Ya tienes una reserva confirmada para este día. Solo puedes hacer una reserva por día."
+
+   • Esta validación aplica tanto para reservas de aulas como de equipos.
+   • Se valida por correo electrónico del usuario.
+
+2. VALIDACIÓN POR AULA Y HORARIO
+   --------------------------------
+   • **MISMA aula**: NO se permite solapamiento horario (ni siquiera tocándose).
+     Si el aula X está reservada de 18:00-20:00, nadie puede reservar aula X
+     en ningún horario que se solape (17:00-19:00, 19:00-21:00, etc.).
+
+   • **AULA diferente**: Se permite con separación de 1 hora entre usuarios diferentes.
+     Si usuario A reserva aula X de 10:00-12:00, usuario B puede reservar aula Y
+     pero debe esperar 1 hora de separación (ej: 13:00-15:00).
+
+   • Ejemplo de conflicto:
+     - Usuario A reserva: 14:00 - 16:00
+     - Usuario B NO puede reservar:
+       • 13:00 - 14:00 (termina dentro del buffer)
+       • 13:00 - 15:00 (se solapa con el buffer)
+       • 15:00 - 17:00 (comienza dentro del buffer)
+       • 16:00 - 18:00 (comienza dentro del buffer)
+
+3. VALIDACIONES EXISTENTES (MANTENIDAS)
+   -------------------------------------
+   • Reservas solo de lunes a viernes.
+   • Horarios entre 9:00 AM y 9:00 PM.
+   • No se permiten reservas con menos de 2 días de anticipación.
+   • Validación de disponibilidad de aulas y equipos.
+   • Un aula puede tener múltiples reservas si no hay conflicto de horario.
+   • Buffer de 1 hora entre reservas en la MISMA aula.
+
+================================================================================
+
+IMPLEMENTACIÓN EN EL FRONTEND:
+
+Para implementar estas validaciones en el frontend, debe considerar:
+
+1. VALIDACIÓN PREVIA AL ENVÍO:
+   • Antes de enviar la solicitud de reserva, verificar si el usuario ya tiene
+     una reserva ese día.
+   • Mostrar mensaje de error claro al usuario.
+
+2. MANEJO DE ERRORES DEL API:
+   • Capturar los errores HTTP 400 del backend y mostrar mensajes apropiados.
+   • Los mensajes de error serán en español.
+
+3. INTERFAZ DE USUARIO:
+   • Deshabilitar fechas/horarios que violen las reglas.
+   • Mostrar calendario con reservas existentes (considerando buffers).
+   • Indicador visual de horarios disponibles vs ocupados.
+
+4. ENDPOINTS A UTILIZAR:
+   • POST /reservas - Para crear nuevas reservas (validará todas las reglas)
+   • GET /reservas/disponibilidad - Para verificar disponibilidad antes de reservar
+
+================================================================================
+
+EJEMPLOS PRÁCTICOS:
+
+ESCENARIO 1: Usuario ya tiene reserva el mismo día
+• Usuario A tiene reserva para el 20/01/2026 de 10:00-12:00
+• Usuario A intenta reservar para el 20/01/2026 de 14:00-16:00
+• RESULTADO: ERROR - "Ya tienes una reserva confirmada para este día"
+
+ESCENARIO 2: Conflicto en misma aula
+• Usuario A reserva aula X: 18:00-20:00
+• Usuario B intenta reservar aula X: 18:00-20:00
+• RESULTADO: ERROR - "El aula no está disponible en el horario seleccionado"
+
+ESCENARIO 3: Separación horaria en aulas diferentes
+• Usuario A reserva aula X: 15:00-17:00
+• Usuario B intenta reservar aula Y: 16:00-18:00
+• RESULTADO: ERROR - "El aula no está disponible en el horario seleccionado" (falta 1 hora de separación)
+
+ESCENARIO 4: Reserva válida en aula diferente
+• Usuario A reserva aula X: 10:00-12:00
+• Usuario B puede reservar aula Y: 13:00-15:00 (hay 1 hora de separación)
+• RESULTADO: ÉXITO
+
+ESCENARIO 5: Reserva válida mismo usuario, aula diferente
+• Usuario A reserva aula X: 10:00-12:00
+• Usuario A puede reservar aula Y: 14:00-16:00 (misma usuario, aula diferente)
+• RESULTADO: ERROR - "Ya tienes una reserva confirmada para este día" (1 por día por usuario)
+
+================================================================================
+
+NOTAS TÉCNICAS:
+
+• Todas las validaciones se realizan en el backend (reservas.service.ts)
+• El frontend debe estar preparado para manejar los errores del API
+• Las validaciones son atómicas: si falla una, la reserva completa se rechaza
+• Los buffers de tiempo se aplican tanto para aulas como para equipos
+
+================================================================================
+
+CONTACTO PARA MODIFICACIONES:
+Si necesita modificar estas reglas, contactar al equipo de desarrollo backend.
+
+================================================================================

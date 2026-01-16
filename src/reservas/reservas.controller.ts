@@ -301,21 +301,29 @@ export class ReservasController {
             fecha: Date;
             horaInicio: string;
             horaFin: string;
+            correoUsuario?: string;
         },
     ) {
         try {
-            const disponible = await this.reservasService.checkDisponibilidad(
+            console.log('=== CONTROLLER: checkDisponibilidad ===');
+            console.log('Body recibido:', JSON.stringify(body, null, 2));
+            console.log('aulas:', body.aulas, 'equipos:', body.equipos);
+
+            const resultado = await this.reservasService.checkDisponibilidad(
                 body.aulas || [],
                 body.equipos || [],
                 body.fecha,
                 body.horaInicio,
                 body.horaFin,
+                undefined,
+                body.correoUsuario,
             );
             return res.status(HttpStatus.OK).json({
-                disponible,
-                message: disponible
+                disponible: resultado.disponible,
+                message: resultado.disponible
                     ? 'Los recursos están disponibles'
-                    : 'Los recursos no están disponibles en el horario seleccionado',
+                    : resultado.motivo || 'Los recursos no están disponibles en el horario seleccionado',
+                motivo: resultado.motivo,
             });
         } catch (error) {
             return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
