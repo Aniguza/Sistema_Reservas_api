@@ -2331,19 +2331,39 @@ export class ReservasService {
                             responsive: false,
                             plugins: {
                                 title: {
-                                    display: true,
-                                    text: tituloGrafico1,
-                                    font: { size: 16 }
+                                  display: true,
+                                  text: tituloGrafico1,
+                                  font: {
+                                    size: 16,
+                                    family: 'Roboto'
+                                  }
                                 },
                                 legend: {
-                                    display: true
+                                  labels: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
                                 }
-                            },
-                            scales: {
+                              },                              
+                              scales: {
+                                x: {
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                },
                                 y: {
-                                    beginAtZero: true
+                                  beginAtZero: true,
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
                                 }
-                            }
+                              }
+                              
                         }
                     }, tituloGrafico1);
 
@@ -2400,19 +2420,38 @@ export class ReservasService {
                             responsive: false,
                             plugins: {
                                 title: {
-                                    display: true,
-                                    text: tituloGrafico1,
-                                    font: { size: 16 }
+                                  display: true,
+                                  text: tituloGrafico1,
+                                  font: {
+                                    size: 16,
+                                    family: 'Roboto'
+                                  }
                                 },
                                 legend: {
-                                    display: true
+                                  labels: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
                                 }
-                            },
-                            scales: {
+                              },
+                              scales: {
+                                x: {
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                },
                                 y: {
-                                    beginAtZero: true
+                                  beginAtZero: true,
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
                                 }
-                            }
+                              }
                         }
                     }, tituloGrafico1);
 
@@ -2472,19 +2511,38 @@ export class ReservasService {
                         responsive: false,
                         plugins: {
                             title: {
-                                display: true,
-                                text: tituloGrafico2,
-                                font: { size: 16 }
+                              display: true,
+                              text: tituloGrafico2,
+                              font: {
+                                size: 16,
+                                family: 'Roboto'
+                              }
                             },
                             legend: {
-                                display: true
+                              labels: {
+                                font: {
+                                  family: 'Roboto'
+                                }
+                              }
                             }
-                        },
-                        scales: {
+                          },
+                          scales: {
+                            x: {
+                              ticks: {
+                                font: {
+                                  family: 'Roboto'
+                                }
+                              }
+                            },
                             y: {
-                                beginAtZero: true
+                              beginAtZero: true,
+                              ticks: {
+                                font: {
+                                  family: 'Roboto'
+                                }
+                              }
                             }
-                        }
+                          }
                     }
                 }, tituloGrafico2);
 
@@ -2564,19 +2622,37 @@ export class ReservasService {
                             responsive: false,
                             plugins: {
                                 title: {
-                                    display: true,
-                                    text: 'Top 5 Aulas Más Reservadas',
-                                    font: { size: 16 }
+                                  display: true,
+                                  text: 'Top 5 Aulas Más Reservadas',
+                                  font: {
+                                    size: 16,
+                                    family: 'Roboto'
+                                  }
                                 },
                                 legend: {
-                                    display: true
+                                  labels: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
                                 }
-                            },
-                            scales: {
+                              },
+                              scales: {
                                 x: {
-                                    beginAtZero: true
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                },
+                                y: {
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
                                 }
-                            }
+                              }
                         }
                     }, 'Top 5 Aulas Más Reservadas');
 
@@ -2649,19 +2725,37 @@ export class ReservasService {
                             responsive: false,
                             plugins: {
                                 title: {
-                                    display: true,
-                                    text: 'Top 5 Equipos Más Reservados',
-                                    font: { size: 16 }
+                                  display: true,
+                                  text: 'Top 5 Equipos Más Reservados',
+                                  font: {
+                                    size: 16,
+                                    family: 'Roboto'
+                                  }
                                 },
                                 legend: {
-                                    display: true
+                                  labels: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
                                 }
-                            },
-                            scales: {
+                              },
+                              scales: {
                                 x: {
-                                    beginAtZero: true
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                },
+                                y: {
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
                                 }
-                            }
+                              }
                         }
                     }, 'Top 5 Equipos Más Reservados');
 
