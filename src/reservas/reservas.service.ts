@@ -11,7 +11,6 @@ import { UpdateReservaDto } from './dto/update-reserva.dto';
 import { Workbook } from 'exceljs';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 import { Chart as ChartJS, registerables } from 'chart.js';
-const ChartJsImage = require('chartjs-to-image');
 
 @Injectable()
 export class ReservasService {
@@ -2174,19 +2173,29 @@ export class ReservasService {
                 fechaFin: fechaFinDate,
             });
 
-            // Usar ChartJsImage que no depende de Fontconfig/Puppeteer
-            this.logger.log('Iniciando configuración con ChartJsImage para dashboard Excel');
+            // Configurar ChartJSNodeCanvas con configuración optimizada para evitar Fontconfig
+            this.logger.log('Iniciando configuración con ChartJSNodeCanvas optimizado para dashboard Excel');
 
-            const createChartImage = (config: any) => {
-                const chart = new ChartJsImage();
-                chart.setConfig(config);
-                chart.setWidth(800);
-                chart.setHeight(400);
-                chart.setBackgroundColor('white');
-                return chart;
-            };
+            // Configurar ChartJS para usar fuentes embebidas y evitar dependencias del sistema
+            ChartJS.defaults.font.family = 'Arial, sans-serif';
+            ChartJS.defaults.font.size = 12;
 
-            this.logger.log('ChartJsImage configurado exitosamente');
+            const chartJSNodeCanvas = new ChartJSNodeCanvas({
+                width: 800,
+                height: 400,
+                backgroundColour: 'white',
+                chartCallback: (ChartJS) => {
+                    // Forzar configuración de fuentes que no dependan del sistema
+                    ChartJS.defaults.font.family = 'Arial, sans-serif';
+                    ChartJS.defaults.font.size = 12;
+                    ChartJS.defaults.responsive = false;
+                    ChartJS.defaults.maintainAspectRatio = false;
+                    // Desactivar animaciones que pueden causar problemas
+                    ChartJS.defaults.animation = false;
+                },
+            });
+
+            this.logger.log('ChartJSNodeCanvas configurado exitosamente con configuración optimizada');
 
             const workbook = new Workbook();
             workbook.creator = 'Sistema de Reservas';
@@ -2306,7 +2315,7 @@ export class ReservasService {
                 this.logger.log(`Generando gráfico "${tituloGrafico1}" - Fuentes globales: family="${ChartJS.defaults.font.family}", size=${ChartJS.defaults.font.size}`);
 
                 try {
-                    const chart = createChartImage({
+                    const chartImage1 = await chartJSNodeCanvas.renderToBuffer({
                         type: 'bar',
                         data: {
                             labels: dashboardData.chartData.labels,
@@ -2325,22 +2334,32 @@ export class ReservasService {
                                 title: {
                                     display: true,
                                     text: tituloGrafico1,
-                                    font: { size: 16 }
+                                    font: { size: 16, family: 'Arial, sans-serif' }
                                 },
                                 legend: {
-                                    display: true
+                                    display: true,
+                                    labels: {
+                                        font: { family: 'Arial, sans-serif' }
+                                    }
                                 }
                             },
                             scales: {
                                 y: {
-                                    beginAtZero: true
+                                    beginAtZero: true,
+                                    ticks: {
+                                        font: { family: 'Arial, sans-serif' }
+                                    }
+                                },
+                                x: {
+                                    ticks: {
+                                        font: { family: 'Arial, sans-serif' }
+                                    }
                                 }
                             }
                         }
                     });
 
-                    const chartImage1 = await chart.toBuffer();
-                    this.logger.log(`Gráfico "${tituloGrafico1}" generado exitosamente con ChartJsImage. Tamaño del buffer: ${chartImage1.length} bytes`);
+                    this.logger.log(`Gráfico "${tituloGrafico1}" generado exitosamente. Tamaño del buffer: ${chartImage1.length} bytes`);
 
                     // Insertar imagen en Excel
                     const imageId1 = workbook.addImage({
@@ -2379,7 +2398,7 @@ export class ReservasService {
                     : 'Reservas por Semana';
 
                 try {
-                    const chart = createChartImage({
+                    const chartImage1 = await chartJSNodeCanvas.renderToBuffer({
                         type: 'bar',
                         data: {
                             labels: dashboardData.chartData.labels,
@@ -2398,22 +2417,32 @@ export class ReservasService {
                                 title: {
                                     display: true,
                                     text: tituloGrafico1,
-                                    font: { size: 16 }
+                                    font: { size: 16, family: 'Arial, sans-serif' }
                                 },
                                 legend: {
-                                    display: true
+                                    display: true,
+                                    labels: {
+                                        font: { family: 'Arial, sans-serif' }
+                                    }
                                 }
                             },
                             scales: {
                                 y: {
-                                    beginAtZero: true
+                                    beginAtZero: true,
+                                    ticks: {
+                                        font: { family: 'Arial, sans-serif' }
+                                    }
+                                },
+                                x: {
+                                    ticks: {
+                                        font: { family: 'Arial, sans-serif' }
+                                    }
                                 }
                             }
                         }
                     });
 
-                    const chartImage1 = await chart.toBuffer();
-                    this.logger.log(`Gráfico "${tituloGrafico1}" generado exitosamente con ChartJsImage. Tamaño del buffer: ${chartImage1.length} bytes`);
+                    this.logger.log(`Gráfico "${tituloGrafico1}" generado exitosamente. Tamaño del buffer: ${chartImage1.length} bytes`);
 
                     // Insertar imagen en Excel
                     const imageId1 = workbook.addImage({
@@ -2453,7 +2482,7 @@ export class ReservasService {
                 : 'Reservas por Mes (Últimos 6 Meses)';
 
             try {
-                const chart = createChartImage({
+                const chartImage2 = await chartJSNodeCanvas.renderToBuffer({
                     type: 'line',
                     data: {
                         labels: dashboardData.monthlyChartData.labels,
@@ -2474,22 +2503,32 @@ export class ReservasService {
                             title: {
                                 display: true,
                                 text: tituloGrafico2,
-                                font: { size: 16 }
+                                font: { size: 16, family: 'Arial, sans-serif' }
                             },
                             legend: {
-                                display: true
+                                display: true,
+                                labels: {
+                                    font: { family: 'Arial, sans-serif' }
+                                }
                             }
                         },
                         scales: {
                             y: {
-                                beginAtZero: true
+                                beginAtZero: true,
+                                ticks: {
+                                    font: { family: 'Arial, sans-serif' }
+                                }
+                            },
+                            x: {
+                                ticks: {
+                                    font: { family: 'Arial, sans-serif' }
+                                }
                             }
                         }
                     }
                 });
 
-                const chartImage2 = await chart.toBuffer();
-                this.logger.log(`Gráfico "${tituloGrafico2}" generado exitosamente con ChartJsImage. Tamaño del buffer: ${chartImage2.length} bytes`);
+                this.logger.log(`Gráfico "${tituloGrafico2}" generado exitosamente. Tamaño del buffer: ${chartImage2.length} bytes`);
 
                 const imageId2 = workbook.addImage({
                     buffer: chartImage2 as any,
@@ -2550,7 +2589,7 @@ export class ReservasService {
             // Generar gráfico de barras horizontales si hay datos
             if (dashboardData.aulasRanking && dashboardData.aulasRanking.length > 0) {
                 try {
-                    const chart = createChartImage({
+                    const chartImageAulas = await chartJSNodeCanvas.renderToBuffer({
                         type: 'bar',
                         data: {
                             labels: dashboardData.aulasRanking.map(a => a.nombre),
@@ -2570,22 +2609,32 @@ export class ReservasService {
                                 title: {
                                     display: true,
                                     text: 'Top 5 Aulas Más Reservadas',
-                                    font: { size: 16 }
+                                    font: { size: 16, family: 'Arial, sans-serif' }
                                 },
                                 legend: {
-                                    display: true
+                                    display: true,
+                                    labels: {
+                                        font: { family: 'Arial, sans-serif' }
+                                    }
                                 }
                             },
                             scales: {
                                 x: {
-                                    beginAtZero: true
+                                    beginAtZero: true,
+                                    ticks: {
+                                        font: { family: 'Arial, sans-serif' }
+                                    }
+                                },
+                                y: {
+                                    ticks: {
+                                        font: { family: 'Arial, sans-serif' }
+                                    }
                                 }
                             }
                         }
                     });
 
-                    const chartImageAulas = await chart.toBuffer();
-                    this.logger.log(`Gráfico "Top 5 Aulas Más Reservadas" generado exitosamente con ChartJsImage. Tamaño del buffer: ${chartImageAulas.length} bytes`);
+                    this.logger.log(`Gráfico "Top 5 Aulas Más Reservadas" generado exitosamente. Tamaño del buffer: ${chartImageAulas.length} bytes`);
 
                     const imageIdAulas = workbook.addImage({
                         buffer: chartImageAulas as any,
@@ -2639,7 +2688,7 @@ export class ReservasService {
             // Generar gráfico de barras horizontales si hay datos
             if (dashboardData.equiposRanking.length > 0) {
                 try {
-                    const chart = createChartImage({
+                    const chartImageEquipos = await chartJSNodeCanvas.renderToBuffer({
                         type: 'bar',
                         data: {
                             labels: dashboardData.equiposRanking.map(e => e.nombre),
@@ -2659,22 +2708,32 @@ export class ReservasService {
                                 title: {
                                     display: true,
                                     text: 'Top 5 Equipos Más Reservados',
-                                    font: { size: 16 }
+                                    font: { size: 16, family: 'Arial, sans-serif' }
                                 },
                                 legend: {
-                                    display: true
+                                    display: true,
+                                    labels: {
+                                        font: { family: 'Arial, sans-serif' }
+                                    }
                                 }
                             },
                             scales: {
                                 x: {
-                                    beginAtZero: true
+                                    beginAtZero: true,
+                                    ticks: {
+                                        font: { family: 'Arial, sans-serif' }
+                                    }
+                                },
+                                y: {
+                                    ticks: {
+                                        font: { family: 'Arial, sans-serif' }
+                                    }
                                 }
                             }
                         }
                     });
 
-                    const chartImageEquipos = await chart.toBuffer();
-                    this.logger.log(`Gráfico "Top 5 Equipos Más Reservados" generado exitosamente con ChartJsImage. Tamaño del buffer: ${chartImageEquipos.length} bytes`);
+                    this.logger.log(`Gráfico "Top 5 Equipos Más Reservados" generado exitosamente. Tamaño del buffer: ${chartImageEquipos.length} bytes`);
 
                     const imageIdEquipos = workbook.addImage({
                         buffer: chartImageEquipos as any,
