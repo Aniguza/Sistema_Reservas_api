@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { Model } from 'mongoose';
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { Model, Types } from 'mongoose';
 import { InjectModel } from '@nestjs/mongoose';
 import { Aula } from './interfaces/aulas.interface';
 import { CreateAulasDTO } from './dto/aulas.dto';
@@ -30,11 +30,26 @@ export class AulasService {
     }
 
     async deleteAula(AulaID: string): Promise<Aula> {
-        const deletedAula = await this.aulasModel.findByIdAndDelete(AulaID).exec();
-        if (!deletedAula) {
+        // Verificar que el aula existe
+        const aula = await this.aulasModel.findById(AulaID).exec();
+        if (!aula) {
             throw new Error(`Aula con ID ${AulaID} no encontrada`);
         }
-        return deletedAula;
+
+        // Verificar si el aula tiene reservas activas
+        const reservasActivas = await this.reservaModel.countDocuments({
+            aulas: new Types.ObjectId(AulaID),
+            estado: { $in: ['confirmada', 'en_curso', 'reprogramada'] }
+        }).exec();
+
+        if (reservasActivas > 0) {
+            throw new BadRequestException(
+                    `El aula tiene ${reservasActivas} reserva(s) activa(s) asociada(s).`
+                );
+        }
+
+        await this.aulasModel.findByIdAndDelete(AulaID).exec();
+        return aula;
     }
 
     async updateAula(AulaID: string, createAulasDTO: CreateAulasDTO): Promise<Aula> {
@@ -52,7 +67,7 @@ export class AulasService {
     async getFechasReservadas(aulaID: string): Promise<any[]> {
         const reservas = await this.reservaModel
             .find({
-                aulas: aulaID,
+                aulas: new Types.ObjectId(aulaID),
                 estado: { $in: ['pendiente', 'confirmada'] }, // Solo reservas activas
             })
             .select('fecha horaInicio horaFin')
@@ -104,7 +119,7 @@ export class AulasService {
         // Buscar reservas que se solapen con el horario solicitado
         const reservasConflicto = await this.reservaModel
             .find({
-                aulas: aulaID,
+                aulas: new Types.ObjectId(aulaID),
                 fecha: fecha,
                 estado: { $in: ['pendiente', 'confirmada'] },
                 $or: [

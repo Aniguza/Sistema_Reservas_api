@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { Model } from 'mongoose';
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { Model, Types } from 'mongoose';
 import { InjectModel } from '@nestjs/mongoose';
 import { Equipo } from './interfaces/equipos.interface';
 import { CreateEquipoDTO } from './dto/equipos.dto';
@@ -30,11 +30,27 @@ export class EquiposService {
     }
 
     async deleteEquipo(EquipoID: string): Promise<Equipo> {
-        const deletedEquipo = await this.equipoModel.findByIdAndDelete(EquipoID).exec();
-        if (!deletedEquipo) {
+        // Verificar que el equipo existe
+        const equipo = await this.equipoModel.findById(EquipoID).exec();
+        if (!equipo) {
             throw new Error(`Equipo con ID ${EquipoID} no encontrado`);
         }
-        return deletedEquipo;
+
+        // Verificar si el equipo tiene reservas activas
+        // El campo equipos es un array de objetos con { equipo: ObjectId, cantidad: Number }
+        const reservasActivas = await this.reservaModel.countDocuments({
+            'equipos.equipo': new Types.ObjectId(EquipoID),
+            estado: { $in: ['confirmada', 'en_curso', 'reprogramada'] }
+        }).exec();
+
+        if (reservasActivas > 0) {
+            throw new BadRequestException(
+                `El equipo tiene ${reservasActivas} reserva(s) activa(s) asociada(s).`
+            );
+        }
+
+        await this.equipoModel.findByIdAndDelete(EquipoID).exec();
+        return equipo;
     }
 
     async updateEquipo(EquipoID: string, createEquipoDTO: CreateEquipoDTO): Promise<Equipo> {
@@ -52,7 +68,7 @@ export class EquiposService {
     async getFechasReservadas(equipoID: string): Promise<any[]> {
         const reservas = await this.reservaModel
             .find({
-                equipos: equipoID,
+                equipos: new Types.ObjectId(equipoID),
                 estado: { $in: ['pendiente', 'confirmada'] }, // Solo reservas activas
             })
             .select('fecha horaInicio horaFin')
@@ -107,7 +123,7 @@ export class EquiposService {
         // Buscar reservas que se solapen con el horario solicitado
         const reservasConflicto = await this.reservaModel
             .find({
-                equipos: equipoID,
+                equipos: new Types.ObjectId(equipoID),
                 fecha: fecha,
                 estado: { $in: ['pendiente', 'confirmada'] },
                 $or: [

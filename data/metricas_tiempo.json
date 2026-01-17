@@ -97,5 +97,14 @@
     "usuario": "u20212225@utp.edu.pe",
     "timestamp": "2026-01-17T03:55:46.175Z",
     "createdAt": "2026-01-17T03:55:46.177Z"
+  },
+  {
+    "id": "696b1c01471bde9b0fd5d313",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 30,
+    "fecha_registro": "2026-01-17T05:20:01.101Z",
+    "usuario": "u20212225@utp.edu.pe",
+    "timestamp": "2026-01-17T05:20:01.111Z",
+    "createdAt": "2026-01-17T05:20:01.117Z"
   }
 ]
