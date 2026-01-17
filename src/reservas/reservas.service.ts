@@ -268,7 +268,7 @@ export class ReservasService {
         const reservasUsuarioDia = await this.reservaModel.find({
             correo: createReservaDto.correo,
             fecha: fechaNormalizada,
-            estado: { $in: ['confirmada', 'pendiente'] }
+            estado: { $in: ['confirmada', 'pendiente', 'reprogramada'] }
         }).exec();
 
         if (reservasUsuarioDia.length > 0) {
@@ -472,7 +472,7 @@ export class ReservasService {
                     // Calcular cantidad reservada en ese intervalo (incluyendo la reserva recién creada)
                     const reservasMismaFecha = await this.reservaModel.find({
                         fecha: fecha,
-                        estado: { $in: ['pendiente', 'confirmada'] },
+                        estado: { $in: ['pendiente', 'confirmada', 'reprogramada'] },
                         'equipos.equipo': req.equipo,
                     }).exec();
 
@@ -993,7 +993,7 @@ export class ReservasService {
         // Buscar reservas que coincidan con las aulas o equipos en la misma fecha
         const query: any = {
             fecha: fechaNormalizada,
-            estado: { $in: ['pendiente', 'confirmada'] },
+            estado: { $in: ['pendiente', 'confirmada', 'reprogramada'] },
         };
 
         if (excludeReservaId) {
@@ -1103,7 +1103,7 @@ export class ReservasService {
         // Solo aplicar para aulas DIFERENTES (ya validamos conflictos de misma aula arriba)
         const todasLasReservasDia = await this.reservaModel.find({
             fecha: fechaNormalizada,
-            estado: { $in: ['confirmada', 'pendiente'] },
+            estado: { $in: ['confirmada', 'pendiente', 'reprogramada'] },
         }).exec();
 
         // Verificar que no haya conflicto con reservas de otros usuarios (mínimo 1 hora de separación)
@@ -1138,7 +1138,7 @@ export class ReservasService {
                 // Buscar reservas en la misma fecha que referencien este equipo
                 const reservasConEquipo = await this.reservaModel.find({
                     fecha: fechaNormalizada,
-                    estado: { $in: ['pendiente', 'confirmada'] },
+                    estado: { $in: ['pendiente', 'confirmada', 'reprogramada'] },
                     'equipos.equipo': req.equipo,
                 }).exec();
 
