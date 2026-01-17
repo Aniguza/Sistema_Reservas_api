@@ -9,8 +9,7 @@ import { MailService } from '../mail/mail.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
 import { Workbook } from 'exceljs';
-import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
-import { Chart as ChartJS, registerables } from 'chart.js';
+import QuickChart from 'quickchart-js';
 
 @Injectable()
 export class ReservasService {
@@ -84,16 +83,7 @@ export class ReservasService {
         @InjectModel('Usuario') private readonly usuarioModel: Model<Usuario>,
         private readonly mailService: MailService,
     ) {
-        // Registrar todos los componentes de Chart.js
-        ChartJS.register(...registerables);
-        this.logger.log('Chart.js registrado con todos los componentes');
-
-        // Configurar fuente con fallbacks para máxima compatibilidad
-        ChartJS.defaults.font.family = 'DejaVu Sans, Liberation Sans, Arial, sans-serif';
-        ChartJS.defaults.font.size = 12;
-
-        this.logger.log(`Configuración de fuente Chart.js: family="${ChartJS.defaults.font.family}", size=${ChartJS.defaults.font.size}`);
-        this.logger.log('Configuración de fuente con fallbacks completada en constructor');
+        this.logger.log('Servicio de reservas inicializado con QuickChart para generación de gráficos');
     }
 
     private async construirContextoReserva(reservaId: string) {
@@ -2173,17 +2163,39 @@ export class ReservasService {
                 fechaFin: fechaFinDate,
             });
 
-            // Configurar ChartJS para generar imágenes
-            this.logger.log('Iniciando configuración de ChartJS para dashboard Excel');
-            this.logger.log(`Fuentes globales de Chart.js: family="${ChartJS.defaults.font.family}", size=${ChartJS.defaults.font.size}`);
+            // Configurar ChartJSNodeCanvas con configuración optimizada para evitar Fontconfig
+            // Usar QuickChart para generar imágenes (sin dependencias locales)
+            this.logger.log('Iniciando configuración con QuickChart para dashboard Excel');
 
-            const chartJSNodeCanvas = new ChartJSNodeCanvas({
-                width: 800,
-                height: 400,
-                backgroundColour: 'white',
-            });
+            const createChartImage = async (config: any, title: string) => {
+                try {
+                    const chart = new QuickChart();
+                    chart.setConfig(config);
+                    chart.setWidth(800);
+                    chart.setHeight(400);
+                    chart.setBackgroundColor('white');
 
-            this.logger.log('ChartJSNodeCanvas creado exitosamente');
+                    this.logger.log(`Generando gráfico "${title}" con QuickChart...`);
+                    const url = chart.getUrl();
+                    this.logger.log(`URL del gráfico generada: ${url}`);
+
+                    // QuickChart devuelve una URL, necesitamos obtener la imagen
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        throw new Error(`QuickChart API error: ${response.status}`);
+                    }
+                    const buffer = await response.arrayBuffer();
+                    const imageBuffer = Buffer.from(buffer);
+
+                    this.logger.log(`Gráfico "${title}" generado exitosamente. Tamaño del buffer: ${imageBuffer.length} bytes`);
+                    return imageBuffer;
+                } catch (error) {
+                    this.logger.error(`Error generando gráfico "${title}" con QuickChart:`, error);
+                    throw error;
+                }
+            };
+
+            this.logger.log('Función helper de QuickChart configurada');
 
             const workbook = new Workbook();
             workbook.creator = 'Sistema de Reservas';
@@ -2300,51 +2312,74 @@ export class ReservasService {
                     ? `Reservas por Día (${fechaInicioDate.toLocaleDateString('es-PE')} - ${fechaFinDate.toLocaleDateString('es-PE')})`
                     : 'Reservas por Día (Últimos 7 Días)';
 
-                this.logger.log(`Generando gráfico "${tituloGrafico1}" - Fuentes globales: family="${ChartJS.defaults.font.family}", size=${ChartJS.defaults.font.size}`);
+                this.logger.log(`Generando gráfico "${tituloGrafico1}" con QuickChart`);
 
-                const chartImage1 = await chartJSNodeCanvas.renderToBuffer({
-                    type: 'bar',
-                    data: {
-                        labels: dashboardData.chartData.labels,
-                        datasets: [{
-                            label: 'Reservas por Día',
-                            data: dashboardData.chartData.data,
-                            backgroundColor: 'rgba(54, 162, 235, 0.6)',
-                            borderColor: 'rgba(54, 162, 235, 1)',
-                            borderWidth: 1
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        plugins: {
-                            title: {
-                                display: true,
-                                text: tituloGrafico1,
-                                font: { size: 16 }
-                            },
-                            legend: {
-                                display: true
-                            }
+                try {
+                    const chartImage1 = await createChartImage({
+                        type: 'bar',
+                        data: {
+                            labels: dashboardData.chartData.labels,
+                            datasets: [{
+                                label: 'Reservas por Día',
+                                data: dashboardData.chartData.data,
+                                backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                                borderColor: 'rgba(54, 162, 235, 1)',
+                                borderWidth: 1
+                            }]
                         },
-                        scales: {
-                            y: {
-                                beginAtZero: true
-                            }
+                        options: {
+                            responsive: false,
+                            plugins: {
+                                title: {
+                                  display: true,
+                                  text: tituloGrafico1,
+                                  font: {
+                                    size: 16,
+                                    family: 'Roboto'
+                                  }
+                                },
+                                legend: {
+                                  labels: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                }
+                              },                              
+                              scales: {
+                                x: {
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                },
+                                y: {
+                                  beginAtZero: true,
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                }
+                              }
+                              
                         }
-                    }
-                });
+                    }, tituloGrafico1);
 
-                this.logger.log(`Gráfico "${tituloGrafico1}" generado exitosamente. Tamaño del buffer: ${chartImage1.length} bytes`);
-
-                // Insertar imagen en Excel
-                const imageId1 = workbook.addImage({
-                    buffer: chartImage1 as any,
-                    extension: 'png',
-                });
-                chartSheet1.addImage(imageId1, {
-                    tl: { col: 0, row: dashboardData.chartData.labels.length + 2 },
-                    ext: { width: 800, height: 400 }
-                });
+                    // Insertar imagen en Excel
+                    const imageId1 = workbook.addImage({
+                        buffer: chartImage1 as any,
+                        extension: 'png',
+                    });
+                    chartSheet1.addImage(imageId1, {
+                        tl: { col: 0, row: dashboardData.chartData.labels.length + 2 },
+                        ext: { width: 800, height: 400 }
+                    });
+                } catch (error) {
+                    this.logger.error(`Error generando gráfico "${tituloGrafico1}":`, error);
+                    // Continuar sin el gráfico
+                }
             } else {
                 // Si es > 30 días, crear hoja "Reservas por Semana"
                 const chartSheet1 = workbook.addWorksheet('Reservas por Semana');
@@ -2367,48 +2402,72 @@ export class ReservasService {
                 const tituloGrafico1 = fechaInicioDate && fechaFinDate
                     ? `Reservas por Semana (${fechaInicioDate.toLocaleDateString('es-PE')} - ${fechaFinDate.toLocaleDateString('es-PE')})`
                     : 'Reservas por Semana';
-                
-                const chartImage1 = await chartJSNodeCanvas.renderToBuffer({
-                    type: 'bar',
-                    data: {
-                        labels: dashboardData.chartData.labels,
-                        datasets: [{
-                            label: 'Reservas por Semana',
-                            data: dashboardData.chartData.data,
-                            backgroundColor: 'rgba(54, 162, 235, 0.6)',
-                            borderColor: 'rgba(54, 162, 235, 1)',
-                            borderWidth: 1
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        plugins: {
-                            title: {
-                                display: true,
-                                text: tituloGrafico1,
-                                font: { size: 16 }
-                            },
-                            legend: {
-                                display: true
-                            }
-                        },
-                        scales: {
-                            y: {
-                                beginAtZero: true
-                            }
-                        }
-                    }
-                });
 
-                // Insertar imagen en Excel
-                const imageId1 = workbook.addImage({
-                    buffer: chartImage1 as any,
-                    extension: 'png',
-                });
-                chartSheet1.addImage(imageId1, {
-                    tl: { col: 0, row: dashboardData.chartData.labels.length + 2 },
-                    ext: { width: 800, height: 400 }
-                });
+                try {
+                    const chartImage1 = await createChartImage({
+                        type: 'bar',
+                        data: {
+                            labels: dashboardData.chartData.labels,
+                            datasets: [{
+                                label: 'Reservas por Semana',
+                                data: dashboardData.chartData.data,
+                                backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                                borderColor: 'rgba(54, 162, 235, 1)',
+                                borderWidth: 1
+                            }]
+                        },
+                        options: {
+                            responsive: false,
+                            plugins: {
+                                title: {
+                                  display: true,
+                                  text: tituloGrafico1,
+                                  font: {
+                                    size: 16,
+                                    family: 'Roboto'
+                                  }
+                                },
+                                legend: {
+                                  labels: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                }
+                              },
+                              scales: {
+                                x: {
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                },
+                                y: {
+                                  beginAtZero: true,
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                }
+                              }
+                        }
+                    }, tituloGrafico1);
+
+                    // Insertar imagen en Excel
+                    const imageId1 = workbook.addImage({
+                        buffer: chartImage1 as any,
+                        extension: 'png',
+                    });
+                    chartSheet1.addImage(imageId1, {
+                        tl: { col: 0, row: dashboardData.chartData.labels.length + 2 },
+                        ext: { width: 800, height: 400 }
+                    });
+                } catch (error) {
+                    this.logger.error(`Error generando gráfico "${tituloGrafico1}":`, error);
+                    // Continuar sin el gráfico
+                }
             }
 
             // ===== HOJA 3: GRÁFICO DE RESERVAS POR MES =====
@@ -2432,49 +2491,73 @@ export class ReservasService {
             const tituloGrafico2 = fechaInicioDate && fechaFinDate
                 ? `Reservas por Mes (${fechaInicioDate.toLocaleDateString('es-PE')} - ${fechaFinDate.toLocaleDateString('es-PE')})`
                 : 'Reservas por Mes (Últimos 6 Meses)';
-            
-            const chartImage2 = await chartJSNodeCanvas.renderToBuffer({
-                type: 'line',
-                data: {
-                    labels: dashboardData.monthlyChartData.labels,
-                    datasets: [{
-                        label: 'Reservas por Mes',
-                        data: dashboardData.monthlyChartData.data,
-                        borderColor: 'rgba(75, 192, 192, 1)',
-                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                        borderWidth: 2,
-                        fill: true,
-                        tension: 0.4
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: tituloGrafico2,
-                            font: { size: 16 }
-                        },
-                        legend: {
-                            display: true
-                        }
-                    },
-                    scales: {
-                        y: {
-                            beginAtZero: true
-                        }
-                    }
-                }
-            });
 
-            const imageId2 = workbook.addImage({
-                buffer: chartImage2 as any,
-                extension: 'png',
-            });
-            chartSheet2.addImage(imageId2, {
-                tl: { col: 0, row: dashboardData.monthlyChartData.labels.length + 2 },
-                ext: { width: 800, height: 400 }
-            });
+            try {
+                const chartImage2 = await createChartImage({
+                    type: 'line',
+                    data: {
+                        labels: dashboardData.monthlyChartData.labels,
+                        datasets: [{
+                            label: 'Reservas por Mes',
+                            data: dashboardData.monthlyChartData.data,
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: false,
+                        plugins: {
+                            title: {
+                              display: true,
+                              text: tituloGrafico2,
+                              font: {
+                                size: 16,
+                                family: 'Roboto'
+                              }
+                            },
+                            legend: {
+                              labels: {
+                                font: {
+                                  family: 'Roboto'
+                                }
+                              }
+                            }
+                          },
+                          scales: {
+                            x: {
+                              ticks: {
+                                font: {
+                                  family: 'Roboto'
+                                }
+                              }
+                            },
+                            y: {
+                              beginAtZero: true,
+                              ticks: {
+                                font: {
+                                  family: 'Roboto'
+                                }
+                              }
+                            }
+                          }
+                    }
+                }, tituloGrafico2);
+
+                const imageId2 = workbook.addImage({
+                    buffer: chartImage2 as any,
+                    extension: 'png',
+                });
+                chartSheet2.addImage(imageId2, {
+                    tl: { col: 0, row: dashboardData.monthlyChartData.labels.length + 2 },
+                    ext: { width: 800, height: 400 }
+                });
+            } catch (error) {
+                this.logger.error(`Error generando gráfico "${tituloGrafico2}":`, error);
+                // Continuar sin insertar la imagen
+            }
 
             // ===== HOJA 3: RANKING DE AULAS =====
             this.logger.log('Generando gráfico de Ranking de Aulas');
@@ -2521,47 +2604,70 @@ export class ReservasService {
 
             // Generar gráfico de barras horizontales si hay datos
             if (dashboardData.aulasRanking && dashboardData.aulasRanking.length > 0) {
-                const chartImageAulas = await chartJSNodeCanvas.renderToBuffer({
-                    type: 'bar',
-                    data: {
-                        labels: dashboardData.aulasRanking.map(a => a.nombre),
-                        datasets: [{
-                            label: 'Reservas',
-                            data: dashboardData.aulasRanking.map(a => a.reservas),
-                            backgroundColor: 'rgba(54, 162, 235, 0.6)',
-                            borderColor: 'rgba(54, 162, 235, 1)',
-                            borderWidth: 1
-                        }]
-                    },
-                    options: {
-                        indexAxis: 'y',
-                        responsive: true,
-                        plugins: {
-                            title: {
-                                display: true,
-                                text: 'Top 5 Aulas Más Reservadas',
-                                font: { size: 16 }
-                            },
-                            legend: {
-                                display: true
-                            }
+                try {
+                    const chartImageAulas = await createChartImage({
+                        type: 'bar',
+                        data: {
+                            labels: dashboardData.aulasRanking.map(a => a.nombre),
+                            datasets: [{
+                                label: 'Reservas',
+                                data: dashboardData.aulasRanking.map(a => a.reservas),
+                                backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                                borderColor: 'rgba(54, 162, 235, 1)',
+                                borderWidth: 1
+                            }]
                         },
-                        scales: {
-                            x: {
-                                beginAtZero: true
-                            }
+                        options: {
+                            indexAxis: 'y',
+                            responsive: false,
+                            plugins: {
+                                title: {
+                                  display: true,
+                                  text: 'Top 5 Aulas Más Reservadas',
+                                  font: {
+                                    size: 16,
+                                    family: 'Roboto'
+                                  }
+                                },
+                                legend: {
+                                  labels: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                }
+                              },
+                              scales: {
+                                x: {
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                },
+                                y: {
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                }
+                              }
                         }
-                    }
-                });
+                    }, 'Top 5 Aulas Más Reservadas');
 
-                const imageIdAulas = workbook.addImage({
-                    buffer: chartImageAulas as any,
-                    extension: 'png',
-                });
-                aulasSheet.addImage(imageIdAulas, {
-                    tl: { col: 0, row: dashboardData.aulasRanking.length + 2 },
-                    ext: { width: 800, height: 400 }
-                });
+                    const imageIdAulas = workbook.addImage({
+                        buffer: chartImageAulas as any,
+                        extension: 'png',
+                    });
+                    aulasSheet.addImage(imageIdAulas, {
+                        tl: { col: 0, row: dashboardData.aulasRanking.length + 2 },
+                        ext: { width: 800, height: 400 }
+                    });
+                } catch (error) {
+                    this.logger.error('Error generando gráfico "Top 5 Aulas Más Reservadas":', error);
+                    // Continuar sin insertar la imagen
+                }
             }
 
             // ===== HOJA 5: RANKING DE EQUIPOS =====
@@ -2601,47 +2707,70 @@ export class ReservasService {
 
             // Generar gráfico de barras horizontales si hay datos
             if (dashboardData.equiposRanking.length > 0) {
-                const chartImageEquipos = await chartJSNodeCanvas.renderToBuffer({
-                    type: 'bar',
-                    data: {
-                        labels: dashboardData.equiposRanking.map(e => e.nombre),
-                        datasets: [{
-                            label: 'Reservas',
-                            data: dashboardData.equiposRanking.map(e => e.reservas),
-                            backgroundColor: 'rgba(153, 102, 255, 0.6)',
-                            borderColor: 'rgba(153, 102, 255, 1)',
-                            borderWidth: 1
-                        }]
-                    },
-                    options: {
-                        indexAxis: 'y',
-                        responsive: true,
-                        plugins: {
-                            title: {
-                                display: true,
-                                text: 'Top 5 Equipos Más Reservados',
-                                font: { size: 16 }
-                            },
-                            legend: {
-                                display: true
-                            }
+                try {
+                    const chartImageEquipos = await createChartImage({
+                        type: 'bar',
+                        data: {
+                            labels: dashboardData.equiposRanking.map(e => e.nombre),
+                            datasets: [{
+                                label: 'Reservas',
+                                data: dashboardData.equiposRanking.map(e => e.reservas),
+                                backgroundColor: 'rgba(153, 102, 255, 0.6)',
+                                borderColor: 'rgba(153, 102, 255, 1)',
+                                borderWidth: 1
+                            }]
                         },
-                        scales: {
-                            x: {
-                                beginAtZero: true
-                            }
+                        options: {
+                            indexAxis: 'y',
+                            responsive: false,
+                            plugins: {
+                                title: {
+                                  display: true,
+                                  text: 'Top 5 Equipos Más Reservados',
+                                  font: {
+                                    size: 16,
+                                    family: 'Roboto'
+                                  }
+                                },
+                                legend: {
+                                  labels: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                }
+                              },
+                              scales: {
+                                x: {
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                },
+                                y: {
+                                  ticks: {
+                                    font: {
+                                      family: 'Roboto'
+                                    }
+                                  }
+                                }
+                              }
                         }
-                    }
-                });
+                    }, 'Top 5 Equipos Más Reservados');
 
-                const imageIdEquipos = workbook.addImage({
-                    buffer: chartImageEquipos as any,
-                    extension: 'png',
-                });
-                equiposSheet.addImage(imageIdEquipos, {
-                    tl: { col: 0, row: dashboardData.equiposRanking.length + 2 },
-                    ext: { width: 800, height: 400 }
-                });
+                    const imageIdEquipos = workbook.addImage({
+                        buffer: chartImageEquipos as any,
+                        extension: 'png',
+                    });
+                    equiposSheet.addImage(imageIdEquipos, {
+                        tl: { col: 0, row: dashboardData.equiposRanking.length + 2 },
+                        ext: { width: 800, height: 400 }
+                    });
+                } catch (error) {
+                    this.logger.error('Error generando gráfico "Top 5 Equipos Más Reservados":', error);
+                    // Continuar sin insertar la imagen
+                }
             }
 
             // Generar buffer
