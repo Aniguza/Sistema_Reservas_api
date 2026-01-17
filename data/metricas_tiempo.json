@@ -1,0 +1,101 @@
+[
+  {
+    "id": "696aefbd41e50bd621fb9bfc",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 41,
+    "fecha_registro": "2026-01-17T02:11:09.228Z",
+    "usuario": "u20213914@utp.edu.pe",
+    "timestamp": "2026-01-17T02:11:09.238Z",
+    "createdAt": "2026-01-17T02:11:09.239Z"
+  },
+  {
+    "id": "696af24041e50bd621fba05c",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 41,
+    "fecha_registro": "2026-01-17T02:21:52.452Z",
+    "usuario": "u20213914@utp.edu.pe",
+    "timestamp": "2026-01-17T02:21:52.459Z",
+    "createdAt": "2026-01-17T02:21:52.460Z"
+  },
+  {
+    "id": "696af27141e50bd621fba0b0",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 34,
+    "fecha_registro": "2026-01-17T02:22:41.016Z",
+    "usuario": "u20213914@utp.edu.pe",
+    "timestamp": "2026-01-17T02:22:41.022Z",
+    "createdAt": "2026-01-17T02:22:41.023Z"
+  },
+  {
+    "id": "696af6bb41e50bd621fba3f7",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 38,
+    "fecha_registro": "2026-01-17T02:40:59.395Z",
+    "usuario": "u20213914@utp.edu.pe",
+    "timestamp": "2026-01-17T02:40:59.403Z",
+    "createdAt": "2026-01-17T02:40:59.404Z"
+  },
+  {
+    "id": "696af945258bec8d2030fd12",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 97,
+    "fecha_registro": "2026-01-17T02:51:49.487Z",
+    "usuario": "u20212225@utp.edu.pe",
+    "timestamp": "2026-01-17T02:51:49.497Z",
+    "createdAt": "2026-01-17T02:51:49.507Z"
+  },
+  {
+    "id": "696b00a39eb79cfe7b088430",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 52,
+    "fecha_registro": "2026-01-17T03:23:15.551Z",
+    "usuario": "u20212225@utp.edu.pe",
+    "timestamp": "2026-01-17T03:23:15.559Z",
+    "createdAt": "2026-01-17T03:23:15.570Z"
+  },
+  {
+    "id": "696b024e9eb79cfe7b0885de",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 31,
+    "fecha_registro": "2026-01-17T03:30:22.593Z",
+    "usuario": "u20212225@utp.edu.pe",
+    "timestamp": "2026-01-17T03:30:22.602Z",
+    "createdAt": "2026-01-17T03:30:22.604Z"
+  },
+  {
+    "id": "696b039a9eb79cfe7b0886f2",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 34,
+    "fecha_registro": "2026-01-17T03:35:54.196Z",
+    "usuario": "u20212225@utp.edu.pe",
+    "timestamp": "2026-01-17T03:35:54.204Z",
+    "createdAt": "2026-01-17T03:35:54.205Z"
+  },
+  {
+    "id": "696b05019eb79cfe7b088825",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 29,
+    "fecha_registro": "2026-01-17T03:41:53.127Z",
+    "usuario": "u20212225@utp.edu.pe",
+    "timestamp": "2026-01-17T03:41:53.137Z",
+    "createdAt": "2026-01-17T03:41:53.139Z"
+  },
+  {
+    "id": "696b06659eb79cfe7b088956",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 35,
+    "fecha_registro": "2026-01-17T03:47:49.889Z",
+    "usuario": "u20212225@utp.edu.pe",
+    "timestamp": "2026-01-17T03:47:49.897Z",
+    "createdAt": "2026-01-17T03:47:49.898Z"
+  },
+  {
+    "id": "696b08429eb79cfe7b088b34",
+    "tipo": "tiempo_completar_reserva",
+    "duracion_segundos": 33,
+    "fecha_registro": "2026-01-17T03:55:46.167Z",
+    "usuario": "u20212225@utp.edu.pe",
+    "timestamp": "2026-01-17T03:55:46.175Z",
+    "createdAt": "2026-01-17T03:55:46.177Z"
+  }
+]

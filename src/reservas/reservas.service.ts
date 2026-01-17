@@ -255,9 +255,14 @@ export class ReservasService {
         const fechaNormalizada = new Date(fecha);
         fechaNormalizada.setHours(12, 0, 0, 0); // Establecer al mediodía para evitar cambios de día
 
+        const inicioDia = new Date(fechaNormalizada);
+        inicioDia.setHours(0, 0, 0, 0);
+        const finDia = new Date(fechaNormalizada);
+        finDia.setHours(23, 59, 59, 999);
+
         const reservasUsuarioDia = await this.reservaModel.find({
             correo: createReservaDto.correo,
-            fecha: fechaNormalizada,
+            fecha: { $gte: inicioDia, $lte: finDia },
             estado: { $in: ['confirmada', 'pendiente', 'reprogramada'] }
         }).exec();
 
@@ -460,8 +465,13 @@ export class ReservasService {
                     if (!equipoDoc) continue;
 
                     // Calcular cantidad reservada en ese intervalo (incluyendo la reserva recién creada)
+                    const inicioDia = new Date(fecha);
+                    inicioDia.setHours(0, 0, 0, 0);
+                    const finDia = new Date(fecha);
+                    finDia.setHours(23, 59, 59, 999);
+
                     const reservasMismaFecha = await this.reservaModel.find({
-                        fecha: fecha,
+                        fecha: { $gte: inicioDia, $lte: finDia },
                         estado: { $in: ['pendiente', 'confirmada', 'reprogramada'] },
                         'equipos.equipo': req.equipo,
                     }).exec();
@@ -563,6 +573,48 @@ export class ReservasService {
         return this.construirRespuestaReserva(reserva);
     }
 
+    // Obtener reserva básica por ID (para uso interno del controlador)
+    async getReservaBasicaById(id: string) {
+        return await this.reservaModel.findById(id)
+            .populate('aulas', 'name codigo')
+            .populate('equipos.equipo', 'name')
+            .exec();
+    }
+
+    // Validar si el usuario puede reprogramar a una fecha específica
+    async validarUsuarioPuedeReprogramar(correo: string, fecha: string | Date, reservaId: string): Promise<boolean> {
+        // Extraer fecha YYYY-MM-DD de forma simple
+        let fechaBuscada: string;
+        const fechaStr = String(fecha);
+        
+        if (/^\d{4}-\d{2}-\d{2}/.test(fechaStr)) {
+            fechaBuscada = fechaStr.split('T')[0];
+        } else {
+            const d = new Date(fecha);
+            fechaBuscada = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+        }
+
+        console.log(`🔍 VALIDACIÓN USUARIO - Fecha buscada: ${fechaBuscada}`);
+
+        // Buscar todas las reservas del usuario y filtrar por fecha en código
+        const todasReservasUsuario = await this.reservaModel.find({
+            correo: correo,
+            estado: { $in: ['confirmada', 'pendiente', 'reprogramada'] },
+            _id: { $ne: reservaId }
+        }).exec();
+
+        // Filtrar por fecha comparando strings YYYY-MM-DD
+        const reservasUsuarioDia = todasReservasUsuario.filter(r => {
+            const fechaReserva = r.fecha.toISOString().split('T')[0];
+            return fechaReserva === fechaBuscada;
+        });
+
+        console.log(`🔍 VALIDACIÓN USUARIO - Usuario ${correo} tiene ${reservasUsuarioDia.length} otras reservas en fecha ${fechaBuscada}`);
+        reservasUsuarioDia.forEach(r => console.log(`   - Reserva ${r._id}: ${r.fecha.toISOString().split('T')[0]} ${r.horaInicio}-${r.horaFin} (${r.estado})`));
+
+        return reservasUsuarioDia.length === 0;
+    }
+
     // Actualizar reserva
     async updateReserva(
         id: string,
@@ -584,7 +636,7 @@ export class ReservasService {
     // Reprogramar reserva (cambiar fecha/hora)
     async reprogramarReserva(
         id: string,
-        fecha: Date,
+        fecha: string | Date,
         horaInicio: string,
         horaFin: string,
         motivo?: string,
@@ -608,13 +660,32 @@ export class ReservasService {
             );
         }
 
-        // Validar 2 días de anticipación para la nueva fecha
-        const nuevaFecha = new Date(fecha);
-        const hoy = new Date();
-        hoy.setHours(0, 0, 0, 0);
-        nuevaFecha.setHours(0, 0, 0, 0);
+        // Parsear fecha correctamente (igual que en checkDisponibilidad)
+        let año: number, mes: number, dia: number;
+        const fechaStr = fecha as any;
+        if (typeof fechaStr === 'string' && /^\d{4}-\d{2}-\d{2}/.test(fechaStr)) {
+            // Parsear string ISO directamente (YYYY-MM-DD)
+            const partes = fechaStr.split('T')[0].split('-');
+            año = parseInt(partes[0], 10);
+            mes = parseInt(partes[1], 10) - 1; // Mes es 0-indexed
+            dia = parseInt(partes[2], 10);
+        } else {
+            // Usar métodos UTC para evitar problemas de zona horaria
+            const fechaDate = new Date(fecha);
+            año = fechaDate.getUTCFullYear();
+            mes = fechaDate.getUTCMonth();
+            dia = fechaDate.getUTCDate();
+        }
 
-        const diferenciaDias = Math.ceil((nuevaFecha.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
+        // Crear fecha en UTC al mediodía para guardar en MongoDB
+        const nuevaFecha = new Date(Date.UTC(año, mes, dia, 12, 0, 0, 0));
+        
+        // Validar 2 días de anticipación para la nueva fecha
+        const hoy = new Date();
+        hoy.setUTCHours(0, 0, 0, 0);
+        const nuevaFechaComparacion = new Date(Date.UTC(año, mes, dia, 0, 0, 0, 0));
+
+        const diferenciaDias = Math.ceil((nuevaFechaComparacion.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
 
         if (diferenciaDias < 2) {
             throw new HttpException(
@@ -626,29 +697,9 @@ export class ReservasService {
         // Validar que la nueva fecha sea de lunes a viernes
         this.validarDiaPermitido(nuevaFecha);
 
-        // Normalizar la fecha para comparación consistente
-        const fechaNormalizada = new Date(fecha);
-        fechaNormalizada.setHours(12, 0, 0, 0);
+        // Nota: Las validaciones de usuario y disponibilidad ya se hicieron en el controlador
 
-        // Validar disponibilidad en la nueva fecha/hora (excluyendo esta reserva)
-        // Validar que el horario esté dentro del rango permitido (09:00-21:00)
-        this.validarHorarioPermitido(horaInicio, horaFin);
-        const resultadoDisponibilidad = await this.checkDisponibilidad(
-            reserva.aulas || [],
-            reserva.equipos || [],
-            fechaNormalizada,
-            horaInicio,
-            horaFin,
-            id,
-            reserva.correo,
-        );
-
-        if (!resultadoDisponibilidad.disponible) {
-            throw new HttpException(
-                resultadoDisponibilidad.motivo || 'El aula no está disponible en el nuevo horario',
-                HttpStatus.CONFLICT,
-            );
-        }
+        // Nota: La validación de disponibilidad ya se hizo en el controlador
 
         // Guardar datos anteriores en historial de reprogramaciones
         if (!reserva.reprogramaciones) {
@@ -664,7 +715,7 @@ export class ReservasService {
         reserva.reprogramaciones.push({
             fechaReprogramacion: new Date(),
             fechaAnterior: reserva.fecha,
-            fechaNueva: fecha,
+            fechaNueva: nuevaFecha, // Usar la fecha normalizada en UTC
             horaInicioAnterior: reserva.horaInicio,
             horaInicioNueva: horaInicio,
             horaFinAnterior: reserva.horaFin,
@@ -672,8 +723,8 @@ export class ReservasService {
             motivo: motivo || 'Sin motivo especificado'
         });
 
-        // Actualizar con nuevos datos
-        reserva.fecha = fecha;
+        // Actualizar con nuevos datos (usar fecha normalizada en UTC)
+        reserva.fecha = nuevaFecha;
         reserva.horaInicio = horaInicio;
         reserva.horaFin = horaFin;
         reserva.estado = 'reprogramada';
@@ -866,17 +917,31 @@ export class ReservasService {
     async checkDisponibilidad(
         aulasIds: string[],
         equipos: { equipo: string; nombre: string; cantidad: number }[],
-        fecha: Date,
+        fecha: Date | string,
         horaInicio: string,
         horaFin: string,
         excludeReservaId?: string,
         userCorreo?: string,
     ): Promise<{ disponible: boolean; motivo?: string }> {
-        // Normalizar la fecha para comparación consistente (al mediodía)
-        const fechaNormalizada = new Date(fecha);
-        fechaNormalizada.setHours(12, 0, 0, 0);
+        // ===== PARSEAR FECHA DE FORMA SIMPLE =====
+        // Extraer año, mes, día directamente del string YYYY-MM-DD
+        let fechaBuscada: string; // Formato YYYY-MM-DD para comparar
+        const fechaStr = String(fecha);
+        
+        if (/^\d{4}-\d{2}-\d{2}/.test(fechaStr)) {
+            // Es string formato YYYY-MM-DD o YYYY-MM-DDTHH:mm:ss
+            fechaBuscada = fechaStr.split('T')[0]; // Solo YYYY-MM-DD
+        } else {
+            // Si es Date, convertir a string YYYY-MM-DD usando UTC
+            const d = new Date(fecha);
+            fechaBuscada = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+        }
+        
+        const [año, mes, dia] = fechaBuscada.split('-').map(Number);
+        const fechaNormalizada = new Date(año, mes - 1, dia, 12, 0, 0, 0); // Para validaciones de día de semana
 
-        console.log(`Buscando reservas para fecha normalizada: ${fechaNormalizada.toISOString()}`);
+        console.log(`🔍 CHECK_DISPONIBILIDAD - Fecha buscada: ${fechaBuscada} (año=${año}, mes=${mes}, dia=${dia})`);
+        console.log(`🔍 Parámetros: aulasIds=${JSON.stringify(aulasIds)}, excludeReservaId=${excludeReservaId}`);
 
         // ===== VALIDACIÓN DE DÍAS Y HORARIOS PERMITIDOS =====
         const hoy = new Date();
@@ -980,9 +1045,25 @@ export class ReservasService {
             console.log(`Aula determinada automáticamente: ${aulasIdsFinales[0]}`);
         }
 
-        // Buscar reservas que coincidan con las aulas o equipos en la misma fecha
+        // ===== BUSCAR RESERVAS Y FILTRAR POR FECHA EN CÓDIGO =====
+        // Esto evita problemas de zona horaria al comparar fechas
+        
+        // Extraer IDs de equipos correctamente (puede ser string o objeto con _id)
+        const equiposIds = equipos && equipos.length > 0 ? equipos.map((e: any) => {
+            if (!e.equipo) return null;
+            if (typeof e.equipo === 'object' && e.equipo._id) {
+                return e.equipo._id.toString();
+            }
+            if (typeof e.equipo === 'string') {
+                return e.equipo;
+            }
+            return e.equipo.toString();
+        }).filter(id => id !== null) : [];
+
+        console.log(`🔍 Equipos IDs extraídos: ${JSON.stringify(equiposIds)}`);
+
+        // Buscar TODAS las reservas activas que usen las mismas aulas o equipos
         const query: any = {
-            fecha: fechaNormalizada,
             estado: { $in: ['pendiente', 'confirmada', 'reprogramada'] },
         };
 
@@ -990,24 +1071,42 @@ export class ReservasService {
             query._id = { $ne: excludeReservaId };
         }
 
-        const equiposIds = equipos.map((e: any) => e.equipo);
-
-        // Buscar reservas que incluyan alguna de las aulas o equipos
         query.$or = [];
-
         if (aulasIdsFinales.length > 0) {
             query.$or.push({ aulas: { $in: aulasIdsFinales } });
         }
-
         if (equiposIds.length > 0) {
             query.$or.push({ 'equipos.equipo': { $in: equiposIds } });
         }
 
-        const reservasExistentes = await this.reservaModel.find(query).exec();
-        console.log(`Query ejecutado:`, JSON.stringify(query, null, 2));
-        console.log(`Reservas encontradas: ${reservasExistentes.length}`);
+        // Si no hay aulas ni equipos, no hay conflictos posibles
+        if (query.$or.length === 0) {
+            console.log('⚠️ No hay aulas ni equipos para validar');
+            return { disponible: true };
+        }
+
+        const todasLasReservas = await this.reservaModel.find(query).exec();
+        console.log(`🔍 Total reservas activas encontradas: ${todasLasReservas.length}`);
+
+        // Función helper para extraer fecha YYYY-MM-DD de una fecha de MongoDB
+        const extraerFechaYYYYMMDD = (fechaMongo: Date): string => {
+            const d = new Date(fechaMongo);
+            // Usar la fecha tal como viene de MongoDB (que está en UTC)
+            const fechaISO = d.toISOString(); // "2026-01-22T17:00:00.000Z"
+            return fechaISO.split('T')[0]; // "2026-01-22"
+        };
+
+        // Filtrar reservas que coincidan con la fecha buscada
+        const reservasExistentes = todasLasReservas.filter(reserva => {
+            const fechaReserva = extraerFechaYYYYMMDD(reserva.fecha);
+            const coincide = fechaReserva === fechaBuscada;
+            console.log(`   Reserva ${reserva._id}: fecha BD=${reserva.fecha.toISOString()} → ${fechaReserva}, buscada=${fechaBuscada}, coincide=${coincide}`);
+            return coincide;
+        });
+
+        console.log(`🔍 Reservas en la fecha ${fechaBuscada}: ${reservasExistentes.length}`);
         reservasExistentes.forEach((reserva, index) => {
-            console.log(`Reserva ${index + 1}: ID=${reserva._id}, Estado=${reserva.estado}, Aulas=${reserva.aulas?.join(',') || 'ninguna'}, Equipos=${reserva.equipos?.map(e => e.equipo).join(',') || 'ninguno'}`);
+            console.log(`   Reserva ${index + 1}: ID=${reserva._id}, Estado=${reserva.estado}, Horario=${reserva.horaInicio}-${reserva.horaFin}, Usuario=${reserva.correo}`);
         });
 
         // Verificar franjas ocupadas definidas en el documento de Aula
@@ -1050,21 +1149,23 @@ export class ReservasService {
         // Si es la MISMA aula, NO permitir solapamiento (buffer = 0)
         // Si es DIFERENTE aula, permitir con separación de 1 hora entre usuarios diferentes
 
-        console.log(`Verificando disponibilidad para aulas: ${aulasIdsFinales.join(', ')}`);
-        console.log(`Horario solicitado: ${horaInicio} - ${horaFin}`);
-        console.log(`Reservas existentes encontradas: ${reservasExistentes.length}`);
+        console.log(`🎯 Verificando disponibilidad para aulas: ${aulasIdsFinales.join(', ')}`);
+        console.log(`🎯 Horario solicitado: ${horaInicio} - ${horaFin}`);
+        console.log(`🎯 Reservas existentes encontradas: ${reservasExistentes.length}`);
+        console.log(`🎯 Query ejecutado:`, JSON.stringify(query, null, 2));
 
-        // Primero verificar conflictos en la MISMA aula (sin buffer)
+        // Primero verificar conflictos en la MISMA aula o EQUIPOS en común (sin buffer)
         for (const reserva of reservasExistentes) {
-            console.log(`Verificando reserva existente: ${reserva._id} - Aulas: ${reserva.aulas?.map((a: any) => a.toString()).join(', ') || 'ninguna'} - Horario: ${reserva.horaInicio}-${reserva.horaFin}`);
+            console.log(`Verificando reserva existente: ${reserva._id} - Usuario: ${reserva.correo} - Aulas: ${reserva.aulas?.map((a: any) => a.toString()).join(', ') || 'ninguna'} - Equipos: ${reserva.equipos?.map((e: any) => e.equipo?.toString()).join(', ') || 'ninguno'} - Horario: ${reserva.horaInicio}-${reserva.horaFin}`);
 
             // Verificar si la reserva existente usa alguna de las aulas solicitadas
             let hayAulaComun = false;
             if (aulasIdsFinales.length > 0 && reserva.aulas && reserva.aulas.length > 0) {
+                console.log(`🔍 Comparando aulas - Solicitadas: ${aulasIdsFinales.join(', ')}, Existente: ${reserva.aulas.map((a: any) => a.toString()).join(', ')}`);
                 for (const aulaSolicitada of aulasIdsFinales) {
                     for (const aulaExistente of reserva.aulas) {
                         const aulaExistenteStr = aulaExistente.toString();
-                        console.log(`Comparando aula solicitada: "${aulaSolicitada}" con aula existente: "${aulaExistenteStr}"`);
+                        console.log(`🔍 Comparando aula solicitada: "${aulaSolicitada}" con aula existente: "${aulaExistenteStr}"`);
                         if (aulaSolicitada === aulaExistenteStr) {
                             hayAulaComun = true;
                             console.log(`✅ Aula común encontrada: ${aulaSolicitada}`);
@@ -1073,31 +1174,54 @@ export class ReservasService {
                     }
                     if (hayAulaComun) break;
                 }
+            } else {
+                console.log(`⚠️ No se pueden comparar aulas - Solicitadas: ${aulasIdsFinales.length}, Existente aulas: ${reserva.aulas?.length || 0}`);
             }
 
-            if (hayAulaComun) {
-                console.log(`Verificando conflicto horario para misma aula...`);
-                // Si hay aulas en común, verificar conflicto SIN buffer (misma aula = conflicto inmediato)
+            // Verificar si hay equipos en común
+            let hayEquipoComun = false;
+            if (equiposIds.length > 0 && reserva.equipos && reserva.equipos.length > 0) {
+                const equiposReservaExistente = reserva.equipos.map((e: any) => e.equipo?.toString());
+                console.log(`🔍 Comparando equipos - Solicitados: ${equiposIds.join(', ')}, Existente: ${equiposReservaExistente.join(', ')}`);
+                for (const equipoSolicitado of equiposIds) {
+                    if (equiposReservaExistente.includes(equipoSolicitado.toString())) {
+                        hayEquipoComun = true;
+                        console.log(`✅ Equipo común encontrado: ${equipoSolicitado}`);
+                        break;
+                    }
+                }
+            }
+
+            // Si hay aula común O equipo común, verificar conflicto de horario
+            if (hayAulaComun || hayEquipoComun) {
+                console.log(`Verificando conflicto horario para ${hayAulaComun ? 'misma aula' : 'mismo equipo'}...`);
+                // Si hay aulas o equipos en común, verificar conflicto SIN buffer (conflicto inmediato)
                 if (this.hayConflictoHorario(horaInicio, horaFin, reserva.horaInicio, reserva.horaFin, 0)) {
-                    console.log(`❌ Conflicto detectado - Misma aula - Horario conflicto`);
-                    return { disponible: false, motivo: 'El aula no está disponible en el horario seleccionado' };
+                    // Verificar si es otro usuario (la reserva actual debería estar excluida, pero por seguridad)
+                    if (userCorreo && reserva.correo !== userCorreo) {
+                        const tipoRecurso = hayAulaComun ? 'aula' : 'equipo';
+                        console.log(`❌ Conflicto detectado - Mismo ${tipoRecurso} - Otro usuario (${reserva.correo}) - Horario conflicto`);
+                        return { disponible: false, motivo: `El ${tipoRecurso} ya está reservado por otro usuario en el horario seleccionado (${reserva.horaInicio} - ${reserva.horaFin})` };
+                    } else {
+                        // Si es la misma reserva (no debería pasar porque está excluida), o mismo usuario, rechazar también
+                        const tipoRecurso = hayAulaComun ? 'aula' : 'equipo';
+                        console.log(`❌ Conflicto detectado - Mismo ${tipoRecurso} - Horario conflicto`);
+                        return { disponible: false, motivo: `El ${tipoRecurso} no está disponible en el horario seleccionado` };
+                    }
                 } else {
-                    console.log(`✅ No hay conflicto horario en misma aula`);
+                    console.log(`✅ No hay conflicto horario`);
                 }
             } else {
-                console.log(`No hay aulas en común con esta reserva`);
+                console.log(`No hay aulas ni equipos en común con esta reserva`);
             }
         }
 
         // ===== VALIDACIÓN: AL MENOS 1 HORA DE SEPARACIÓN ENTRE RESERVAS DE DIFERENTES USUARIOS =====
         // Solo aplicar para aulas DIFERENTES (ya validamos conflictos de misma aula arriba)
-        const todasLasReservasDia = await this.reservaModel.find({
-            fecha: fechaNormalizada,
-            estado: { $in: ['confirmada', 'pendiente', 'reprogramada'] },
-        }).exec();
+        // Usar las reservas ya filtradas por fecha (reservasExistentes ya tiene las del día correcto)
 
         // Verificar que no haya conflicto con reservas de otros usuarios (mínimo 1 hora de separación)
-        for (const reserva of todasLasReservasDia) {
+        for (const reserva of reservasExistentes) {
             // Solo verificar si es de otro usuario (diferente correo) Y no usa las mismas aulas
             if (userCorreo && reserva.correo !== userCorreo) {
                 // Verificar si esta reserva usa aulas DIFERENTES a las solicitadas
@@ -1116,32 +1240,38 @@ export class ReservasService {
             }
         }
 
-        // Verificar cantidades por equipo
+        // Verificar cantidades por equipo (usando las reservas ya filtradas por fecha)
+        // La validación de conflictos ya se hizo arriba, aquí solo verificamos cantidades
         if (equipos && equipos.length > 0) {
             for (const req of equipos) {
-                // obtener el documento del equipo para conocer la cantidad total
-                const equipoDoc: any = await this.equipoModel.findById(req.equipo).exec();
-                if (!equipoDoc) {
-                    throw new HttpException(`Equipo ${req.equipo} no existe`, HttpStatus.NOT_FOUND);
-                }
+                const reqEquipo = req.equipo as any;
+                const equipoIdStr = typeof reqEquipo === 'object' && reqEquipo._id 
+                    ? reqEquipo._id.toString() 
+                    : String(reqEquipo);
 
-                // Buscar reservas en la misma fecha que referencien este equipo
-                const reservasConEquipo = await this.reservaModel.find({
-                    fecha: fechaNormalizada,
-                    estado: { $in: ['pendiente', 'confirmada', 'reprogramada'] },
-                    'equipos.equipo': req.equipo,
-                }).exec();
+                // obtener el documento del equipo para conocer la cantidad total
+                const equipoDoc: any = await this.equipoModel.findById(equipoIdStr).exec();
+                if (!equipoDoc) {
+                    console.log(`⚠️ Equipo ${equipoIdStr} no encontrado en BD`);
+                    continue; // Saltar si no existe
+                }
 
                 let totalReservado = 0;
 
-                for (const r of reservasConEquipo) {
-                    const reserva: any = r;
-                    if (excludeReservaId && reserva._id.toString() === excludeReservaId) continue;
-                    if (this.hayConflictoHorario(horaInicio, horaFin, reserva.horaInicio, reserva.horaFin)) {
-                        if (reserva.equipos && reserva.equipos.length > 0) {
-                            const match = reserva.equipos.find((ec: any) => ec.equipo.toString() === req.equipo.toString());
-                            if (match) totalReservado += (match.cantidad || 1);
-                        }
+                // Usar las reservas ya filtradas por fecha
+                for (const reserva of reservasExistentes) {
+                    // Verificar si esta reserva usa el equipo
+                    const usaEquipo = reserva.equipos?.some((e: any) => {
+                        const eqId = typeof e.equipo === 'object' ? e.equipo.toString() : e.equipo?.toString();
+                        return eqId === equipoIdStr;
+                    });
+
+                    if (usaEquipo && this.hayConflictoHorario(horaInicio, horaFin, reserva.horaInicio, reserva.horaFin, 0)) {
+                        const match = reserva.equipos?.find((ec: any) => {
+                            const eqId = typeof ec.equipo === 'object' ? ec.equipo.toString() : ec.equipo?.toString();
+                            return eqId === equipoIdStr;
+                        });
+                        if (match) totalReservado += (match.cantidad || 1);
                     }
                 }
 
@@ -1153,6 +1283,7 @@ export class ReservasService {
             }
         }
 
+        console.log(`✅ DISPONIBILIDAD APROBADA - No se encontraron conflictos`);
         return { disponible: true };
     }
 

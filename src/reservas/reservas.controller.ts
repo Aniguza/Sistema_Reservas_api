@@ -17,6 +17,7 @@ import { ReservasService } from './reservas.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
 import { CreateIncidenciaDto, UpdateIncidenciaDto } from './dto/incidencia.dto';
+import { ReprogramarReservaDto } from './dto/reprogramar-reserva.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -176,26 +177,102 @@ export class ReservasController {
         }
     }
 
-    // Reprogramar reserva (ALUMNOS, DOCENTES Y ADMIN - NO ASISTENTES)
+    // Reprogramar reserva (SOLO EL PROPIETARIO O ADMIN - NO ASISTENTES)
     @Patch('/reprogramar/:id')
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles('administrador')
+    @Roles('alumno', 'docente', 'administrador')
     async reprogramarReserva(
         @Res() res,
         @Param('id') id: string,
-        @Body() body: { fecha: Date; horaInicio: string; horaFin: string; motivo?: string },
+        @Body() body: ReprogramarReservaDto,
+        @Request() req,
     ) {
         try {
-            const reserva = await this.reservasService.reprogramarReserva(
+            // Log detallado del body recibido
+            console.log('🔍 ===== BODY RECIBIDO EN REPROGRAMACIÓN =====');
+            console.log(`🔍 Body completo:`, JSON.stringify(body, null, 2));
+            console.log(`🔍 body.fecha: ${body.fecha}`);
+            console.log(`🔍 Tipo de body.fecha: ${typeof body.fecha}`);
+            console.log('🔍 ============================================');
+
+            // La fecha viene como string "YYYY-MM-DD" desde el DTO
+            // Asegurar que sea string (por si acaso)
+            const fechaParaValidar: string = typeof body.fecha === 'string' 
+                ? body.fecha 
+                : String(body.fecha).split('T')[0]; // Si por alguna razón viene como Date, extraer solo la fecha
+
+            // Primero obtener la reserva para determinar aulas/equipos
+            const reserva = await this.reservasService.getReservaBasicaById(id);
+
+            if (!reserva) {
+                return res.status(HttpStatus.NOT_FOUND).json({
+                    message: 'Reserva no encontrada',
+                });
+            }
+
+            // Obtener el usuario del token JWT
+            const user = req.user;
+
+            // Validar que solo el propietario de la reserva pueda reprogramarla (o un administrador)
+            if (user.rol !== 'administrador' && reserva.correo !== user.correo) {
+                return res.status(HttpStatus.FORBIDDEN).json({
+                    message: 'Solo puedes reprogramar tus propias reservas',
+                });
+            }
+
+            // Validar que el usuario no tenga otra reserva activa en la nueva fecha (excluyendo esta reserva)
+            const puedeReprogramar = await this.reservasService.validarUsuarioPuedeReprogramar(
+                reserva.correo,
+                fechaParaValidar as any,
+                id
+            );
+
+            if (!puedeReprogramar) {
+                return res.status(HttpStatus.BAD_REQUEST).json({
+                    message: 'Ya tienes una reserva activa para este día. Solo puedes tener una reserva por día.',
+                });
+            }
+
+            // Validar disponibilidad usando el endpoint de checkDisponibilidad
+            let aulasParaValidar: string[] = [];
+            let equiposParaValidar: any[] = [];
+
+            if (reserva.equipos && reserva.equipos.length > 0) {
+                equiposParaValidar = reserva.equipos;
+            } else if (reserva.aulas && reserva.aulas.length > 0) {
+                aulasParaValidar = reserva.aulas.map((a: any) => a._id.toString());
+            }
+
+            console.log('🔍 CONTROLLER REPROGRAMACIÓN - Validando disponibilidad de aula/equipos...');
+            console.log(`🔍 Fecha para validar: ${fechaParaValidar} (tipo: ${typeof fechaParaValidar})`);
+            const resultadoCheck = await this.reservasService.checkDisponibilidad(
+                aulasParaValidar,
+                equiposParaValidar,
+                fechaParaValidar as any,
+                body.horaInicio,
+                body.horaFin,
+                id, // Excluir la reserva actual
+                reserva.correo,
+            );
+
+            if (!resultadoCheck.disponible) {
+                return res.status(HttpStatus.CONFLICT).json({
+                    message: 'No se puede reprogramar: ' + resultadoCheck.motivo,
+                    motivo: resultadoCheck.motivo,
+                });
+            }
+
+            // Si está disponible, proceder con la reprogramación
+            const reservaActualizada = await this.reservasService.reprogramarReserva(
                 id,
-                body.fecha,
+                fechaParaValidar as any,
                 body.horaInicio,
                 body.horaFin,
                 body.motivo,
             );
             return res.status(HttpStatus.OK).json({
                 message: 'Reserva reprogramada exitosamente',
-                reserva,
+                reserva: reservaActualizada,
             });
         } catch (error) {
             return res.status(error.status || HttpStatus.INTERNAL_SERVER_ERROR).json({
