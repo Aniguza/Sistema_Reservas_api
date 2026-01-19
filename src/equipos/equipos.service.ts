@@ -1,15 +1,30 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, OnModuleInit } from '@nestjs/common';
 import { Model, Types } from 'mongoose';
 import { InjectModel } from '@nestjs/mongoose';
 import { Equipo } from './interfaces/equipos.interface';
 import { CreateEquipoDTO } from './dto/equipos.dto';
 
 @Injectable()
-export class EquiposService {
+export class EquiposService implements OnModuleInit {
     constructor(
         @InjectModel('Equipo') private readonly equipoModel: Model<Equipo>,
         @InjectModel('Reserva') private readonly reservaModel: Model<any>
     ) { }
+
+    /**
+     * Al iniciar el módulo, corrige los equipos con estado "ocupado"
+     * ya que ese estado no debería ser permanente
+     */
+    async onModuleInit() {
+        const result = await this.equipoModel.updateMany(
+            { disponibilidad: 'ocupado' },
+            { $set: { disponibilidad: 'disponible' } }
+        ).exec();
+        
+        if (result.modifiedCount > 0) {
+            console.log(`[EquiposService] Corregidos ${result.modifiedCount} equipos con estado "ocupado" -> "disponible"`);
+        }
+    }
 
     async createEquipo(createEquipoDTO: CreateEquipoDTO): Promise<Equipo> {
         const nuevoEquipo = new this.equipoModel(createEquipoDTO);

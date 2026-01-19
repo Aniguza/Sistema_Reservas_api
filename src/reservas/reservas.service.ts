@@ -488,10 +488,8 @@ export class ReservasService {
                         }
                     }
 
-                    const restante = (equipoDoc.quantity || 0) - totalReservado;
-                    if (restante <= 0) {
-                        await this.equipoModel.findByIdAndUpdate(req.equipo, { disponibilidad: 'ocupado' }).exec();
-                    }
+                    // La disponibilidad se calcula dinámicamente según fecha/horario
+                    // No se actualiza el estado permanente del equipo
                 } catch (err) {
                     // No bloquear por errores de actualización de equipo
                     console.warn('Error actualizando disponibilidad de equipo:', err.message || err);
