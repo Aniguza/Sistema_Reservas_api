@@ -24,8 +24,7 @@ export class UsuariosController {
             });
         } catch (error) {
             return response.status(HttpStatus.BAD_REQUEST).json({
-                message: 'Error al crear el usuario',
-                error: error.message,
+                message: error.message
             });
         }
     }
