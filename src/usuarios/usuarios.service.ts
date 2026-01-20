@@ -32,7 +32,7 @@ export class UsuariosService {
                 throw error;
             }
             throw new HttpException(
-                'Error al crear el usuario',
+                error.message,
                 HttpStatus.INTERNAL_SERVER_ERROR,
             );
         }
